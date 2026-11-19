@@ -1,19 +1,26 @@
 # 宫格图切分：把一张 ImageGen 宫格图（两宫格 / 四宫格）切成逐镜场景图。
 #
 #   python split_panels.py --grids-dir "原图/" --out "episodes/jingwei/场景图" --panels 2
+#   python split_panels.py --grids-dir "原图/" --panels 2 --format 9:16 --out "场景图_竖"  # 竖版篇
 #   python split_panels.py --images g1.png g2.png --panels 4 --out "场景图/"
 #   python split_panels.py --grids-dir "原图/" --panels 2 --dry-run     # 只看切分结果，不写盘
 #
 # 为什么有这个脚本：
 #   一个镜头一图要逐张出图，两宫格一次出 2 镜、四宫格一次出 4 镜，省一半以上积分，
 #   但宫格图每格不是 16:9，且有时会留白边/串图，必须按「格」单独裁切并放大。
-#   本脚本把宫格图拆成 1920x1080 的单镜图，落到场景图目录，随后照常跑 fill_shots.py，
+#   本脚本把宫格图拆成单镜图，落到场景图目录，随后照常跑 fill_shots.py，
 #   引擎不需要任何改动（它看到的仍是普通单镜图）。
 #
 # 版式：
-#   --panels 2  两宫格：图比宽则上下叠（1x2），图比高则左右并排（2x1），也可 --layout 强制
+#   --panels 2  两宫格：图比宽则左右并排（2x1），图比高则上下叠（1x2），也可 --layout 强制
 #   --panels 4  四宫格：固定 2x2，阅读顺序 左上→右上→左下→右下
 #   切出的文件名 <原名>_p01.jpg … 按阅读顺序，fill_shots 按文件名排序正好对上镜号。
+#
+# 画幅（--format）：
+#   16:9（默认）→ 每格裁 16:9 后放大到 1920x1080
+#   9:16（竖版）→ 每格「居中取宽」裁 9:16（主体压中轴、左右各切一半的横向冗余）后放大到 1080x1920
+#     竖版必须用**横版画布**出图（如 1536x1024，左右两格各 768x1024 竖构图、主体居中、上下留余量），
+#     不要用竖画布上下叠两格——那两格是 4:3 横构图，切成 9:16 会把主体切没。
 
 import argparse
 import pathlib
@@ -21,7 +28,7 @@ import sys
 
 EXTS = (".jpg", ".jpeg", ".png", ".webp")
 WHITE = 245          # 任一通道 < 245 视为非白（去白边）
-TARGET = (1920, 1080)
+TARGETS = {"16:9": (1920, 1080), "9:16": (1080, 1920)}
 
 
 def cells(rows, cols):
@@ -70,31 +77,54 @@ def to_16x9(box, cell, anchor="top"):
     return (0, t, cell.width, t + int(round(cell.width * 9 / 16)))
 
 
-def split_one(path, layout, out_dir, quality, pad, anchor, dry):
+def to_9x16(box, cell, anchor="center"):
+    """把内容框裁成 9:16 竖图：横向居中取宽（主体压中轴），保留整幅高度。
+
+    竖版出图规范是「横版画布 + 每格竖构图」，格子本身是 3:4 竖图，
+    这里只切掉左右各一半的横向冗余，不切上下——所以不会再出现拉伸/切头。
+    内容偏窄（比 9:16 还瘦）时改为纵向取高，居中或贴顶（anchor 控制）。
+    """
+    l, t, r, b = box
+    w, h = r - l, b - t
+    want_w = h * 9 / 16
+    if want_w <= w:                       # 内容够宽：高度不缩，横向居中取 9:16
+        w2 = int(round(want_w))
+        l2 = l + (w - w2) // 2
+        return (l2, t, l2 + w2, b)
+    want_h = w * 16 / 9                   # 内容偏窄：宽度不缩，纵向取 9:16
+    h2 = int(round(want_h))
+    if h2 <= cell.height:
+        t2 = t + (h - h2) // 2 if anchor == "center" else t
+        return (l, t2, r, t2 + h2)
+    return (l, 0, r, int(round((r - l) * 16 / 9)))
+
+
+def split_one(path, layout, out_dir, quality, pad, anchor, dry, fmt="16:9", resample_tag=""):
     from PIL import Image
     im = Image.open(path).convert("RGB")
     W, H = im.size
     rows, cols = layout
     cw, ch = W // cols, H // rows
+    target = TARGETS[fmt]
     made = []
     for k, (r, c) in enumerate(cells(rows, cols), 1):
         cell = im.crop((c * cw, r * ch, (c + 1) * cw, (r + 1) * ch))
         box = content_box(cell, pad)
-        box = to_16x9(box, cell, anchor)
-        panel = cell.crop(box).resize(TARGET, Image.LANCZOS)
+        box = to_9x16(box, cell, anchor) if fmt == "9:16" else to_16x9(box, cell, anchor)
+        panel = cell.crop(box).resize(target, Image.LANCZOS)
         dst = out_dir / f"{path.stem}_p{k:02d}.jpg"
         cover = (box[2] - box[0]) * (box[3] - box[1]) / float(cell.width * cell.height)
         note = "" if cover >= 0.55 else f"  [注意] 内容仅占格 {cover:.0%}，可能有白边，请抽帧核对"
         if not dry:
             out_dir.mkdir(parents=True, exist_ok=True)
             panel.save(dst, quality=quality, subsampling=2)
-        print(f"  {path.name} 格{k} -> {dst.name}  裁切 {box[2]-box[0]}x{box[3]-box[1]} -> {TARGET[0]}x{TARGET[1]}"
+        print(f"  {path.name} 格{k} -> {dst.name}  裁切 {box[2]-box[0]}x{box[3]-box[1]} -> {target[0]}x{target[1]}"
               f"（内容占比 {cover:.0%}）{note}")
         made.append(dst)
     return made
 
 
-def pick_layout(path, panels, layout_arg):
+def pick_layout(path, panels, layout_arg, fmt="16:9"):
     from PIL import Image
     if layout_arg:
         r, c = (int(x) for x in layout_arg.lower().split("x"))
@@ -103,6 +133,13 @@ def pick_layout(path, panels, layout_arg):
         return (2, 2)
     im = Image.open(path)
     ratio = im.width / im.height
+    if fmt == "9:16":
+        # 竖版两宫格必须是「横版画布左右两格」，竖画布上下叠出来的两格是 4:3 横图，切 9:16 会切没主体
+        if ratio >= 1.2:
+            return (1, 2)
+        raise SystemExit(f"{path.name} 是竖画布（{im.width}x{im.height}），不适合竖版两宫格：\n"
+                         "  竖版请用横版画布出图（如 1536x1024，左右两格各 768x1024 竖构图、主体居中、上下留余量），\n"
+                         "  或显式指定 --layout 2x1 若你确实把两格横着画在竖画布上")
     if ratio >= 1.2:                 # 宽图：左右并排（两宫格 2x1）
         return (1, 2)
     if ratio <= 0.85:                # 竖图：上下叠（两宫格 1x2）
@@ -120,22 +157,25 @@ def main():
     ap.add_argument("--panels", type=int, choices=[2, 4], default=2,
                     help="宫格数：2=两宫格（默认）/ 4=四宫格")
     ap.add_argument("--layout", help="显式版式，如 2x1（左右两格）/ 1x2（上下两格）/ 2x2")
+    ap.add_argument("--format", choices=["16:9", "9:16"], default="16:9",
+                    help="画幅：16:9=切 1920x1080（默认）/ 9:16=切 1080x1920（竖版篇，每格居中取宽）")
     ap.add_argument("--quality", type=int, default=92, help="JPEG 质量，默认 92")
     ap.add_argument("--pad", type=float, default=0.0, help="内容框外扩比例，默认 0")
     ap.add_argument("--anchor", choices=["top", "center"], default="top",
-                    help="16:9 纵向锚点：top=贴顶（默认，与单图流程一致）/ center=居中")
+                    help="裁切锚点：16:9 默认 top=贴顶（与单图流程一致）/ center=居中；"
+                         "9:16 横向恒为居中取宽，本项只影响内容偏窄时的纵向锚点")
     ap.add_argument("--dry-run", action="store_true", help="只打印切分信息，不写文件")
     a = ap.parse_args()
 
     if a.grids_dir:
-        d = pathlib.Path(a.grids_dir)
+        d = pathlib.Path(a.grids_dir).resolve()          # 相对路径按当前目录解析成绝对路径
         if not d.is_dir():
-            raise SystemExit(f"宫格图目录不存在：{d}")
+            raise SystemExit(f"宫格图目录不存在：{d}（相对路径是按当前工作目录 {pathlib.Path.cwd()} 解析的）")
         grids = sorted(p for p in d.iterdir() if p.suffix.lower() in EXTS)
-        out_dir = pathlib.Path(a.out) if a.out else d.parent / "场景图"
+        out_dir = pathlib.Path(a.out).resolve() if a.out else d.parent / "场景图"
     elif a.images:
-        grids = [pathlib.Path(p) for p in a.images]
-        out_dir = pathlib.Path(a.out) if a.out else pathlib.Path.cwd() / "场景图"
+        grids = [pathlib.Path(p).resolve() for p in a.images]
+        out_dir = pathlib.Path(a.out).resolve() if a.out else pathlib.Path.cwd() / "场景图"
     else:
         raise SystemExit("给 --grids-dir 或 --images 指定宫格图")
 
@@ -146,18 +186,22 @@ def main():
         raise SystemExit("宫格图不存在：" + "、".join(missing))
 
     print(f"宫格图 {len(grids)} 张，按 {a.panels} 宫格切分 -> {out_dir}"
+          f"（画幅 {a.format} / 单镜 {TARGETS[a.format][0]}x{TARGETS[a.format][1]}）"
           + ("（dry-run，不写盘）" if a.dry_run else ""))
     total = 0
     for g in grids:
-        layout = pick_layout(g, a.panels, a.layout)
+        layout = pick_layout(g, a.panels, a.layout, a.format)
         print(f"[{g.name}] 版式 {layout[0]}x{layout[1]}")
-        total += len(split_one(g, layout, out_dir, a.quality, a.pad, a.anchor, a.dry_run))
+        total += len(split_one(g, layout, out_dir, a.quality, a.pad, a.anchor, a.dry_run, a.format))
 
     print(f"\n共切出 {total} 张单镜场景图" + ("（dry-run 未写盘）" if a.dry_run else ""))
+    if a.format == "9:16":
+        print("提示：竖版成片是 1080x1920，切完抽帧核对主体是否在中轴、上下是否被切；"
+              "本篇场景图目录建议单独建（场景图_竖/），不要和横版混用。")
     print("下一步：")
     print(f'  python "{pathlib.Path(__file__).resolve().parent.as_posix()}/fill_shots.py" '
           f'--id <本篇id> --images-dir "{out_dir.as_posix()}" --root "<工作目录>"')
-    print("  若镜数多于切出的张数，fill_shots 会循环复用；不够就再补宫格图重切。")
+    print("  若镜数多于切出的张数，fill_shots 会按等间隔复用；不够就再补宫格图重切。")
 
 
 if __name__ == "__main__":

@@ -30,9 +30,19 @@ def story_root(arg_root):
 
 
 def resolve_path(path, ep):
-    """相对路径以本篇目录为基准解析（命令行可能从任何工作目录执行）。"""
+    """路径解析（命令行可能从任何工作目录执行）：
+    绝对路径直接用；相对路径先按本篇目录、再按当前工作目录找，都不存在则返回本篇目录下的候选，
+    便于报错时打印一个能看懂的绝对路径。"""
     p = pathlib.Path(path)
-    return p.resolve() if p.is_absolute() else (ep / p).resolve()
+    if p.is_absolute():
+        return p.resolve()
+    cand = (ep / p).resolve()
+    if cand.exists():
+        return cand
+    cwd_cand = (pathlib.Path.cwd() / p).resolve()
+    if cwd_cand.exists():
+        return cwd_cand
+    return cand
 
 
 def rel_to_ep(path, ep):
@@ -82,17 +92,23 @@ def main():
 
     # ---- 图片：任意张数 ----
     if a.images_dir:
-        d = pathlib.Path(a.images_dir)
+        d = resolve_path(a.images_dir, ep)          # 相对路径不再按当前目录裸解析
+        if not d.is_dir():
+            raise SystemExit(f"场景图目录不存在：{d}\n"
+                             f"  （相对路径已按本篇目录 {ep} 与当前目录 {pathlib.Path.cwd()} 各试一次）")
         imgs = sorted(p for p in d.iterdir() if p.suffix.lower() in EXTS)
+        if not imgs:
+            raise SystemExit(f"场景图目录里没有图片：{d}（支持 jpg/jpeg/png/webp）")
+        print(f"  场景图目录：{d}")
     elif a.images:
-        imgs = [pathlib.Path(p) for p in a.images]
+        imgs = [resolve_path(p, ep) for p in a.images]
     else:
         imgs = []
 
     if imgs:
-        missing = [str(p) for p in imgs if not resolve_path(p, ep).exists()]
+        missing = [str(p) for p in imgs if not p.exists()]
         if missing:
-            raise SystemExit("图片不存在：" + ", ".join(missing))
+            raise SystemExit("图片不存在：" + "、".join(missing))
         cfg["images"] = [rel_to_ep(p, ep) for p in imgs]
         k, remapped = len(imgs), 0
         for s in cfg.get("shots", []):
