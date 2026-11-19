@@ -10,17 +10,67 @@
 # 换图后会自动把越界的 img:i / img2:i,j 重映射回新图片列表，不用手工改 src。
 # --pairs：开工确认第 5 项选「一镜 2 张」时用。图片按 2 张一组配给每个镜
 #          （镜 k -> img2:2k,2k+1），自动跳过动态镜、不为它消耗图片。
-# --dynamic-at 指定哪些镜改用动态素材；同一段素材被多个镜引用时引擎自动 split，
-# 各镜可用不同 phase 取不同画面。
+# --dynamic-at 指定哪些镜改用动态素材；**默认一镜一素材**（按顺序一对一配段）。
+#   动态镜多于素材段时直接报错，两种受控例外加 --reuse-motion 才放行：
+#     ① 同一动作拆相邻两段  ② 环境连续体（烟/火/雨/人流）延展
+#   放行后同一段素材会给多个镜，phase 按「顺序相接」累加（后一镜从前一镜结束点起算），
+#   不再 1.5 秒等距乱铺；打印里会列出每镜配的是第几段、phase 多少、是否复用。
 
 import argparse
 import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 EXTS = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def series_dir():
+    return pathlib.Path(__file__).resolve().parent.parent / "runtime" / "series"
+
+
+def ffprobe_exe():
+    """ffprobe 路径：走 runtime/series/ffpath.py（FFMPEG_BIN/PATH/常见目录），找不到返回 None。"""
+    try:
+        sys.path.insert(0, str(series_dir()))
+        import ffpath
+        return ffpath.ffprobe()
+    except Exception:
+        return None
+
+
+def clip_duration(path):
+    """动态素材时长（秒）；探测失败返回 None。"""
+    exe = ffprobe_exe()
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "-v", "error", "-show_entries", "format=duration",
+                            "-of", "default=nk=1:nw=1", str(path)],
+                           capture_output=True, text=True, timeout=20)
+        return float(r.stdout.strip())
+    except Exception:
+        return None
+
+
+def shot_durations(ep, n, fallback=2.2):
+    """从本篇 caption.srt 取每句时长（镜头顺序 = 字幕顺序），读不到就用 fallback 兜底。"""
+    durs = []
+    srt = ep / "caption.srt"
+    if srt.exists():
+        txt = srt.read_text(encoding="utf-8", errors="ignore")
+        pat = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)")
+        for m in pat.finditer(txt):
+            g = [int(x) for x in m.groups()]
+            s = g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 1000
+            e = g[4] * 3600 + g[5] * 60 + g[6] + g[7] / 1000
+            if e > s:
+                durs.append(e - s)
+    if len(durs) >= n:
+        return durs[:n]
+    return durs + [fallback] * (n - len(durs))
 
 
 def story_root(arg_root):
@@ -74,7 +124,10 @@ def main():
     ap.add_argument("--motions", nargs="*", help="任意段数的动态素材路径")
     ap.add_argument("--motion", help="单段动态素材路径（--motions 的简写，兼容旧用法）")
     ap.add_argument("--dynamic-at", default="",
-                    help="哪些镜改用动态素材，0 起算逗号分隔，如 '2,5'")
+                    help="哪些镜改用动态素材，0 起算逗号分隔，如 '2,5'；默认一镜一素材")
+    ap.add_argument("--reuse-motion", action="store_true",
+                    help="放行动态素材复用：仅用于「同一动作拆相邻两段」或「环境氛围延展」；"
+                         "开启后同一段素材可服务多个镜，phase 按顺序相接累加")
     ap.add_argument("--pairs", action="store_true",
                     help="一镜两图：图片按 2 张一组配给每个镜（镜 k -> img2:2k,2k+1），"
                          "自动跳过动态镜；开工确认第 5 项选「一镜 2 张」时用")
@@ -166,14 +219,42 @@ def main():
         bad = [i for i in idx if not 0 <= i < len(shots)]
         if bad:
             raise SystemExit(f"动态镜序号越界：{bad}（共 {len(shots)} 镜）")
+        # ---- 默认一镜一素材：动态镜多于素材段就拦下，两种受控例外用 --reuse-motion 放行 ----
+        if len(idx) > len(motions) and not a.reuse_motion:
+            extra = idx[len(motions):]
+            raise SystemExit(
+                f"动态镜 {len(idx)} 个 > 动态素材 {len(motions)} 段：默认要求一镜一素材。\n"
+                f"  · 补素材（VideoGen 每段约 50~100 积分），或把镜 {extra} 改回静态图；\n"
+                "  · 若确属「同一动作拆相邻两段」或「环境氛围延展」，加 --reuse-motion 显式放行。")
+        durs = shot_durations(ep, len(shots))
+        cursor, mapping = {}, []
         for k, i in enumerate(idx):
+            j = (k % len(motions)) if a.reuse_motion else k
+            phase = round(cursor.get(j, 0.0), 2)
+            cursor[j] = cursor.get(j, 0.0) + durs[i]
             shots[i].update({
-                "src": f"motion:{k % len(motions)}",
+                "src": f"motion:{j}",
                 "motion": True,
-                "phase": round(0.4 + (k % 4) * 1.5, 2),
+                "phase": phase,
                 "crop16x9": shots[i].get("crop16x9", True),
             })
-        print(f"  镜 {idx} 已改为动态镜（共 {len(motions)} 段素材）")
+            mapping.append((i, j, phase))
+        print(f"  动态镜分配（素材 {len(motions)} 段）：")
+        used = {j: [m for m in mapping if m[1] == j] for j in range(len(motions))}
+        seen = {}
+        for i, j, ph in mapping:
+            tail = "  [复用同段]" if seen.get(j) else ""
+            seen[j] = True
+            print(f"    镜 {i:>2} -> 第 {j} 段  phase {ph:.2f}s{tail}")
+        # 复用是否真的抓到了不同画面：phase 超过素材时长就会从头重放，等于重播
+        for j, ms in used.items():
+            if len(ms) < 2:
+                continue
+            p = resolve_path(motions[j], ep)
+            dur = clip_duration(p)
+            if dur and ms[-1][2] >= dur - 0.8:
+                print(f"    [警告] 第 {j} 段素材只有 {dur:.2f}s，最后一个 phase {ms[-1][2]:.2f}s "
+                      f"已接近/超过尾部，复用会从头重放；请换更长的素材或改回静态图。")
 
     # ---- 一镜两图：图片按 2 张一组配给每个镜（开工确认第 5 项）----
     shots = cfg.get("shots", [])
