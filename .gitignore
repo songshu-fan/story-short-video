@@ -1,8 +1,8 @@
 __pycache__/
 *.pyc
-episodes/
-缓存/
-_render/
+/episodes/
+/缓存/
+**/_render/
 *.zip
 .DS_Store
 Thumbs.db

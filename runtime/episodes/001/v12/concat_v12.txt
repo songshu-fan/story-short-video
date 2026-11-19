@@ -1,0 +1,2 @@
+file 'C:/Users/fanso/AppData/Local/Doubao/User Data/Default/.doubao/agent_mode/workspace/.user_skills/story-short-video/runtime/episodes/001/v12/head.wav'
+file 'C:/Users/fanso/Doubao/chats/2026-11-17/new-chat-1/episodes/buhaipa/vo.wav'
