@@ -94,7 +94,7 @@ GRAD_HALF_RES = True
 ENCODER = "libx264"
 # 分镜缓存的图形版本号：滤镜图结构有改动就加 1，保证旧缓存不再命中（否则「修了却没变」）。
 # 2 = 一镜两图在缓存路径改用真实输入标签 0:v / 1:v（旧版标签不存在，第二张被吞）。
-GRAPH_VERSION = 2
+GRAPH_VERSION = 3
 PRESET = "fast"
 # 分镜缓存：把每镜各渲成一段，改动后只重跑合成层。默认关（首渲略慢一点点）。
 SHOT_CACHE = False
@@ -315,6 +315,8 @@ if EPISODE_ARG:
                   for s in shot_cfg if s.get("motion")}
     CROP_MOTION = {s["n"] for s in shot_cfg
                    if s.get("motion") and s.get("crop16x9", True)}
+    # 可选镜头运动模式：不写＝原来的纵向浮动；动态镜忽略该字段（素材自带运镜）。
+    MOVE_BY_N = {s["n"]: (s.get("move") or {}) for s in shot_cfg}
     ACCENTS = set(cfg.get("accents", []))
     # 本篇可自带渲染档（start_story --profile 写入）：只对命令行没显式指定的项生效。
     _r = cfg.get("render") or {}
@@ -836,29 +838,68 @@ def shot_chain(label, i, dur, phase, is_motion, crop16x9, half=0, tag=None):
     画面运动：奇数镜（第1/3/5…镜）从上往下浮动，偶数镜从下往上浮动；
     zoom 固定、x 固定，无推近脉冲、无左右震动、无叠加微抖。
     片头/片尾针不在此链。
+    **动态镜不参与位移**：素材自带运镜，再叠浮动＝双重运动，还要白走一遍 3x 超采样把画面糊软；
+    所以 is_motion 走独立分支，只取帧/裁切/压暗/镜像/定时长。
     half=0 正常单图；half=1/2 表示一镜两图的前/后半段（各自走完整浮动，用 tag 命名输出）。"""
     tag = tag or f"shot{i}"
     # 一镜两图时每段各自走完整平移，段长 = 半镜 + 半个溶解（两段重叠 XF2）。
     seg_dur = (dur / 2 + 0.15) if half else dur
     z0, dz, dx, dy, per, mirror = LENS[i]
+
+    # ---- 动态镜：不浮动、不超采样，原速取帧后只做必要的裁切与调色 ----
+    if is_motion:
+        pre = f"fps={FPS},"
+        if phase > 0:
+            pre += f"trim=start={phase:.3f},setpts=PTS-STARTPTS,"
+        if crop16x9:
+            # 3:2 素材先裁 16:9（这一刀也切掉「AI生成」水印）；16:9 素材写 crop16x9:false 跳过。
+            # 竖版没有 16:9 可裁，改为等比铺满 9:16（会裁掉左右两侧）。
+            if FORMAT == "16:9":
+                pre += "crop=1152:648:0:120,"
+            else:
+                pre += (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+                        f"crop={W}:{H},")
+        if i in DIM:
+            pre += "eq=brightness=-0.13:contrast=1.22:saturation=0.88,"
+        if mirror:
+            pre += "hflip,"
+        # 等比铺满再居中裁：16:9 源不损失画面，非 16:9 源宁可裁边也不拉伸。
+        pre += f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+        return (f"[{label}]{pre}"
+                f"trim=duration={seg_dur:.3f},setpts=PTS-STARTPTS,"
+                f"format=yuv420p[{tag}]")
     # 每镜至少放大到 1.12：zoom=1 时 ih-ih/zoom=0，没有富余空间就无法上下平移。
     # dz / per 为旧镜头表保留字段，已停用：zoom 固定，不再推近、不再开镜脉冲。
     z0 = max(z0, 1.12)
-    z = f"{z0}"
-    # x 固定：只保留每镜静态取景偏移 dx，不再加任何随时间变化的水平摆动/抖动。
-    # 超采样后源宽变成 W*SUPERSAMPLE，dx 同比放大才能在成片里保持原构图偏移。
-    x = f"iw/2-(iw/zoom/2)+{dx * SUPERSAMPLE}"
-    # 垂直平移：span = 当前 zoom 下可移动的富余高度，prog 从 0 匀速到 1。
-    # 注意 zoompan 的 y 是裁剪窗口位置：y 增大→窗口下移→画面内容向上滚。
-    # 所以「图片从上往下」= 内容下滚 = y 从 span→0；「从下往上」= y 从 0→span。
-    # i 从 0 起算：i 偶数 = 第1/3/5…镜（奇数镜）→ 内容从上往下（y: span→0）；
-    #             i 奇数 = 第2/4/6…镜（偶数镜）→ 内容从下往上（y: 0→span）。
-    # zoompan 会把越界的 y 自动 clamp 到 [0, ih-ih/zoom]，不会出黑边。
-    span = f"(ih-ih/zoom)*{MOTION_SCALE}"
+    # ---- 镜头运动模式（shots[].move，可选；不写＝原来的纵向浮动，逐字不变）----
+    #   {"type": "pan_y | pan_x | zoom", "amount": 0.2, "dir": "down|up | left|right | in|out"}
+    #   pan_x.amount = 可用横向余量的比例（0.05~0.5，默认 0.2）；技能层建议 ≤0.3（约 3% 画宽）
+    #   zoom.amount  = 绝对 zoom 增量（0.01~0.08，默认 0.04）
+    mv = MOVE_BY_N.get(i) or {}
+    kind = str(mv.get("type", "pan_y")).strip().lower()
+    direction = str(mv.get("dir", "")).strip().lower()
     prog = f"min(1,on/{seg_dur * FPS:.1f})"
-    pan_y = (f"{span}*(1-{prog})" if i % 2 == 0
-             else f"{span}*{prog}")
-    y = pan_y  # 只留平滑的方向性平移，不再叠任何纵向 sin 微抖
+    if kind in ("zoom", "zoom_ramp"):
+        amt = max(0.01, min(0.08, float(mv.get("amount", 0.04) or 0.04)))
+        z_in = direction != "out"
+        z = f"{z0}*(1{'+' if z_in else '-'}{amt:.4f}*{prog})"
+        x = "iw/2-(iw/zoom/2)"
+        y = "ih/2-(ih/zoom/2)"
+    elif kind == "pan_x":
+        amt = max(0.05, min(0.5, float(mv.get("amount", 0.2) or 0.2)))
+        z = f"{z0}"
+        span_x = f"(iw-iw/zoom)*{amt:.3f}"
+        left = direction == "left" or (not direction and i % 2 == 0)
+        x = (f"iw/2-(iw/zoom/2)-{span_x}*(1-{prog})" if left
+             else f"iw/2-(iw/zoom/2)+{span_x}*{prog}")
+        y = "ih/2-(ih/zoom/2)"
+    else:  # pan_y（默认）：与旧行为逐字一致
+        z = f"{z0}"
+        # 超采样后源宽变成 W*SUPERSAMPLE，dx 同比放大才能在成片里保持原构图偏移。
+        x = f"iw/2-(iw/zoom/2)+{dx * SUPERSAMPLE}"
+        span = f"(ih-ih/zoom)*{MOTION_SCALE}"
+        down = direction in ("down", "top") or (not direction and i % 2 == 0)
+        y = f"{span}*(1-{prog})" if down else f"{span}*{prog}"
     pre = f"fps={FPS},"
     if is_motion and phase > 0:
         pre += f"trim=start={phase:.3f},setpts=PTS-STARTPTS,"
@@ -924,6 +965,7 @@ def build_shot_cache(n, D, labels):
             "i": i, "srcs": srcs, "lens": list(LENS[i]),
             "dur": round(D[i], 3), "phase": PHASE_BY_N.get(i, 0.0),
             "motion": i in IS_MOTION, "crop": i in CROP_MOTION, "dim": i in DIM,
+            "move": MOVE_BY_N.get(i) or {},
             "ss": SUPERSAMPLE, "zp": ZOOM_OUT_SAME_RES, "wh": [W, H, FPS],
             "scale": MOTION_SCALE,
             # 图形版本：一镜两图在缓存路径改用真实输入标签（gv=2），旧缓存一律失效，
