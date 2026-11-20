@@ -53,13 +53,13 @@ HOST_X = W - HOST_W
 # 因此竖版 host_w=0；字幕字号与安全边距也不同（竖屏要避开底部交互区与右侧点赞栏）。
 FORMAT_SPECS = {
     "16:9": dict(w=1920, h=1080, host_w=766,
-                 vol=30, title=64, body=46,
+                 vol=34, title=66, body=54,
                  vol_lr=140, vol_mv=72, title_lr=140, title_mv=128,
-                 body_lr=220, body_mv=115, needle=58, credit=26, end_lr=120, wrap=24),
+                 body_lr=220, body_mv=115, needle=62, credit=28, end_lr=120, wrap=23),
     "9:16": dict(w=1080, h=1920, host_w=0,
-                 vol=24, title=54, body=40,
+                 vol=28, title=56, body=48,
                  vol_lr=54, vol_mv=200, title_lr=54, title_mv=300,
-                 body_lr=54, body_mv=300, needle=46, credit=22, end_lr=48, wrap=22),
+                 body_lr=54, body_mv=300, needle=52, credit=26, end_lr=48, wrap=18),
 }
 FORMAT = "16:9"
 HEAD_LEN = 5.0
@@ -330,7 +330,7 @@ def _auto_move(note, beat, last):
 
 
 def resolve_moves(shots):
-    """显式 move 优先；{"auto":true} 走标签推断；再套三条节奏约束（只动 auto 出来的镜）。"""
+    """静态镜默认按 note/beat 标签自动推断运镜（v2.7.0）；`{"auto": false}` 回落旧版纵向浮动。"""
     last = len(shots) - 1
     out, autos = {}, set()
     for i, s in enumerate(shots):
@@ -339,13 +339,13 @@ def resolve_moves(shots):
             continue
         mv = dict(s.get("move") or {})
         kind = str(mv.get("type", "")).strip().lower()
-        if kind in ("auto", "auto_move") or mv.get("auto"):
+        if kind in ("legacy", "float", "pan_y_legacy") or mv.get("auto") is False:
+            out[i] = {}                      # 显式退回旧版纵向浮动
+        elif kind in ("auto", "auto_move") or mv.get("auto") is True or not kind:
             out[i] = _auto_move(str(s.get("note", "")), str(s.get("beat", "")), i == last)
             autos.add(i)
-        elif kind:
-            out[i] = mv                      # 人工指定，不参与节奏改写
         else:
-            out[i] = {}                      # 旧行为：纵向浮动
+            out[i] = mv                      # 人工指定，不参与节奏改写
     if not autos:
         return out
     # ① 横移方向交替，连续同向不超过 2 镜
@@ -396,20 +396,17 @@ if EPISODE_ARG:
                   for s in shot_cfg if s.get("motion")}
     CROP_MOTION = {s["n"] for s in shot_cfg
                    if s.get("motion") and s.get("crop16x9", True)}
-    # 可选镜头运动模式：不写＝原来的纵向浮动；动态镜忽略该字段（素材自带运镜）。
-    # move 里写 {"auto": true}（或 "type":"auto"）时，按 note/beat 的文字标签自动选题，
-    # 显式写 type 的镜一律以人工为准。
+    # 静态镜默认按 note 标签自动选运镜；写 {"auto": false} 或 type=legacy 退回纵向浮动。
     MOVE_BY_N = resolve_moves(shot_cfg)
-    _auto = [i for i in sorted(MOVE_BY_N)
-             if str((dict(shot_cfg[i].get("move") or {})).get("type", "")).lower()
-             in ("auto", "auto_move") or (dict(shot_cfg[i].get("move") or {})).get("auto")]
-    if _auto:
+    _moves = [i for i in sorted(MOVE_BY_N)
+              if (MOVE_BY_N[i] or {}).get("type") not in (None, "", "none")]
+    if _moves:
         txt = " | ".join(
             f"镜{i} {MOVE_BY_N[i].get('type')}"
             + (f" {MOVE_BY_N[i].get('amount')}" if MOVE_BY_N[i].get("amount") else "")
             + (f" {MOVE_BY_N[i].get('dir')}" if MOVE_BY_N[i].get("dir") else "")
-            for i in _auto)
-        print(f"[auto运镜] {txt}")
+            for i in _moves)
+        print(f"[运镜] {txt}")
     ACCENTS = set(cfg.get("accents", []))
     # 本篇可自带渲染档（start_story --profile 写入）：只对命令行没显式指定的项生效。
     _r = cfg.get("render") or {}
@@ -552,7 +549,7 @@ def wrap_cn(text, width=24):
         if len(buf) >= width and ch in "，。；：？！、":
             out.append(buf)
             buf = ""
-        elif len(buf) >= width + 8:
+        elif len(buf) >= width + 2:
             out.append(buf)
             buf = ""
     if buf:
@@ -806,8 +803,8 @@ def build_subtitle(cues, full_len):
     # 字幕事件的边距按画幅取（16:9 仍是 220,220,115，逐字不变；竖版走竖屏安全区）
     _sp = FORMAT_SPECS[FORMAT]
     body_margins = f"{_sp['body_lr']},{_sp['body_lr']},{_sp['body_mv']}"
-    wrap_w = _sp["wrap"]        # 折行字数：16:9 = 24（原值），竖版 22
-    # 重音句的加粗放大字号也按画幅同比（16:9 = 50，竖版 40 -> 44）
+    wrap_w = _sp["wrap"]        # 折行字数：按 (画宽-2*边距)/字号 推，16:9=23，竖版=18
+    # 重音句的加粗放大字号按正文同比（正文×50/46：16:9 ≈59，竖版 ≈52）
     accent_fs = int(round(_sp["body"] * 50 / 46))
     head_text = HEAD_TEXT
     if HEAD_VOICE_ON:     # 片头没有口播（title 且 head.voice=false）时不挂片头字幕
@@ -1430,3 +1427,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
