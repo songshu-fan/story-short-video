@@ -300,6 +300,87 @@ IMG_PATHS = [
     ROOT / "shot_07.jpg", V2 / "bg3.jpg", ROOT / "shot_08.jpg",
     ROOT / "shot_09.jpg", V2 / "bg2.jpg",
 ]
+
+
+def _auto_move(note, beat, last):
+    """按 note/beat 的文字标签推断运镜。标签写法建议【景别·主体】，见 workflow.md。"""
+    t = f"{note} {beat}"
+
+    def kw(*words):
+        return any(w in t for w in words)
+
+    # 结尾空镜优先拉远，收束感最强
+    if last and kw("空镜", "无人", "留白", "雪", "海", "城墙", "原野", "废墟"):
+        return {"type": "zoom", "amount": 0.04, "dir": "out"}
+    if kw("空镜", "无人", "留白", "远景", "海面", "海上", "山川", "群山", "城墙",
+          "雪原", "天空", "荒原", "戈壁", "沙漠", "草原", "江面", "船队", "舰队"):
+        return {"type": "pan_x", "amount": 0.25}
+    if kw("人群", "群臣", "朝会", "市集", "码头", "营帐", "列阵", "军阵", "街道",
+          "人流", "长街", "广场", "船坞", "宴席", "大殿"):
+        return {"type": "pan_x", "amount": 0.2}
+    if kw("战斗", "厮杀", "交战", "冲锋", "混战", "对峙", "攻城", "血战", "追击"):
+        return {"type": "zoom", "amount": 0.06, "dir": "in"}
+    if kw("特写", "手部", "器物", "奏报", "奏折", "金锭", "银箱", "账册", "罗盘",
+          "烛", "朱笔", "玺", "印", "碗", "茶", "刀", "信"):
+        return {"type": "zoom", "amount": 0.05, "dir": "in"}
+    if kw("人物", "背影", "侧后", "中景", "近景", "独处", "对话", "跪", "站",
+          "坐", "面孔", "书生", "官员", "主角", "主人翁"):
+        return {"type": "zoom", "amount": 0.04, "dir": "in"}
+    return {"type": "zoom", "amount": 0.03, "dir": "in"}
+
+
+def resolve_moves(shots):
+    """显式 move 优先；{"auto":true} 走标签推断；再套三条节奏约束（只动 auto 出来的镜）。"""
+    last = len(shots) - 1
+    out, autos = {}, set()
+    for i, s in enumerate(shots):
+        if s.get("motion"):
+            out[i] = {"type": "none"}        # 动态镜永远不动
+            continue
+        mv = dict(s.get("move") or {})
+        kind = str(mv.get("type", "")).strip().lower()
+        if kind in ("auto", "auto_move") or mv.get("auto"):
+            out[i] = _auto_move(str(s.get("note", "")), str(s.get("beat", "")), i == last)
+            autos.add(i)
+        elif kind:
+            out[i] = mv                      # 人工指定，不参与节奏改写
+        else:
+            out[i] = {}                      # 旧行为：纵向浮动
+    if not autos:
+        return out
+    # ① 横移方向交替，连续同向不超过 2 镜
+    run_dir, run_len = "", 0
+    for i in sorted(out):
+        if i not in autos:
+            continue
+        mv = out[i]
+        if mv.get("type") != "pan_x":
+            run_dir, run_len = "", 0
+            continue
+        d = str(mv.get("dir", "")).strip().lower()
+        if not d:
+            d = "right" if run_dir == "left" else "left"
+        if d == run_dir:
+            run_len += 1
+            if run_len >= 2:                   # 已经两连，第三镜强制反向
+                d = "right" if d == "left" else "left"
+                run_len = 1
+        else:
+            run_len = 1
+        run_dir = d
+        mv["dir"] = d
+    # ② 每 5 镜至少留一镜不动（hold），给眼睛休息点；末镜豁免（收尾拉远更有价值）
+    for w0 in range(0, len(shots), 5):
+        win = [i for i in range(w0, min(w0 + 5, len(shots)))
+               if i in autos and i != last and out[i].get("type") != "none"]
+        if not win or any(out[i].get("type") == "hold" for i in win):
+            continue
+        out[win[len(win) // 2]] = {"type": "hold"}
+    return out
+
+
+MOVE_BY_N = {}          # --episode 篇由 resolve_moves() 覆盖；默认样板篇没有 move 配置
+
 if EPISODE_ARG:
     EP = pathlib.Path(EPISODE_ARG).resolve()
     cfg = json.loads(EP.read_text(encoding="utf-8"))
@@ -316,7 +397,19 @@ if EPISODE_ARG:
     CROP_MOTION = {s["n"] for s in shot_cfg
                    if s.get("motion") and s.get("crop16x9", True)}
     # 可选镜头运动模式：不写＝原来的纵向浮动；动态镜忽略该字段（素材自带运镜）。
-    MOVE_BY_N = {s["n"]: (s.get("move") or {}) for s in shot_cfg}
+    # move 里写 {"auto": true}（或 "type":"auto"）时，按 note/beat 的文字标签自动选题，
+    # 显式写 type 的镜一律以人工为准。
+    MOVE_BY_N = resolve_moves(shot_cfg)
+    _auto = [i for i in sorted(MOVE_BY_N)
+             if str((dict(shot_cfg[i].get("move") or {})).get("type", "")).lower()
+             in ("auto", "auto_move") or (dict(shot_cfg[i].get("move") or {})).get("auto")]
+    if _auto:
+        txt = " | ".join(
+            f"镜{i} {MOVE_BY_N[i].get('type')}"
+            + (f" {MOVE_BY_N[i].get('amount')}" if MOVE_BY_N[i].get("amount") else "")
+            + (f" {MOVE_BY_N[i].get('dir')}" if MOVE_BY_N[i].get("dir") else "")
+            for i in _auto)
+        print(f"[auto运镜] {txt}")
     ACCENTS = set(cfg.get("accents", []))
     # 本篇可自带渲染档（start_story --profile 写入）：只对命令行没显式指定的项生效。
     _r = cfg.get("render") or {}
@@ -879,7 +972,12 @@ def shot_chain(label, i, dur, phase, is_motion, crop16x9, half=0, tag=None):
     kind = str(mv.get("type", "pan_y")).strip().lower()
     direction = str(mv.get("dir", "")).strip().lower()
     prog = f"min(1,on/{seg_dur * FPS:.1f})"
-    if kind in ("zoom", "zoom_ramp"):
+    if kind in ("hold", "none", "static", "still"):
+        # 完全不动：给眼睛留休息点，也用于「每 5 镜一静」的节奏约束
+        z = f"{z0}"
+        x = f"iw/2-(iw/zoom/2)+{dx * SUPERSAMPLE}"
+        y = "ih/2-(ih/zoom/2)"
+    elif kind in ("zoom", "zoom_ramp"):
         amt = max(0.01, min(0.08, float(mv.get("amount", 0.04) or 0.04)))
         z_in = direction != "out"
         z = f"{z0}*(1{'+' if z_in else '-'}{amt:.4f}*{prog})"
