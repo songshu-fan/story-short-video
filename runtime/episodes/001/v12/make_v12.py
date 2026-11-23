@@ -1389,6 +1389,10 @@ def main():
         run(["ffmpeg", "-y", "-hide_banner", "-v", "error", "-i", str(final),
              "-vf", f"select='{sel}'", "-fps_mode", "vfr",
              "-start_number", "1", "still_v12_%02d.png"])
+        # 自动归档（v2.9.0）：静帧直接跟着成片落在 成片/，不用再手工 cp 出 _render/
+        if dest.resolve() != WORK.resolve():
+            for f in sorted(WORK.glob("still_v12_*.png")):
+                shutil.move(str(f), str(dest / f.name))
 
     # 评论区钩子（可选）：本篇 script.json 的 discussion；没有则不加该键，产物与旧版一致
     discussion = None
@@ -1404,11 +1408,11 @@ def main():
         "id": meta["id"], "title": title, "version": "v12",
         "mode": MODE, "duration_sec": round(real, 2),
         "full_duration_sec": round(total, 2), "resolution": f"{W}x{H}", "fps": FPS,
-        "changes": [
+        "changes": meta.get("changes") or [
             "成片直接用主题名命名，不加风格后缀",
             "场景图按统一风格生成：写实电影剧照 / 电影级自然光 / 浅景深 / 写实历史剧质感，画面无文字字幕、避免人物正脸大特写",
-            "画面只做平滑上下浮动：zoom/x 固定、y 线性平移；开镜脉冲、纵向微抖、左右摆动、逐帧胶片颗粒全部去掉",
-            "平移在 3x 超采样画布上做（SUPERSAMPLE=3）再缩回 1080p，消除慢速下 zoompan 按整像素取整造成的阶梯卡顿",
+            "静态镜默认按 note 的「【景别·主体】」标签自动选运镜（缓推/横移/收尾拉远），并套节奏约束；显式 move 的镜人工优先，动态镜不叠位移",
+            "字幕按画幅定字号（横版正文 54px 折行 23 字 / 竖版 48px 折行 18 字），平移在 3x 超采样画布上做再缩回，消除阶梯卡顿",
             "浮尘光点固定 x、只做上升；雾层水平位置固定，仅保留纵向浮动",
             "镜头运动、转场、字幕、片头、音频链路全部沿用既有实现",
         ],
@@ -1420,9 +1424,15 @@ def main():
     }
     if discussion:
         info["discussion"] = discussion      # 评论区钩子问题：发布时直接抄进评论首条
-    (WORK / f"项目说明_v12{'_短版' if MODE == 'short' else ''}.json").write_text(
+    # 项目说明随成片落到 成片/（v2.9.0）；changes 可由 meta.json 的 changes 逐篇覆盖
+    info_name = f"项目说明_v12{'_短版' if MODE == 'short' else ''}.json"
+    (dest / info_name).write_text(
         json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"完成：{final.name}  {real:.1f}s | {len(stills)} 张逐镜静帧")
+    if dest.resolve() != WORK.resolve():             # 001 回归时 dest==WORK，不能删刚写的文件
+        for old in WORK.glob("项目说明_v12*.json"):   # 清掉 _render/ 里上一版的残留
+            old.unlink()
+    print(f"完成：{final.name}  {real:.1f}s | {len(stills)} 张逐镜静帧"
+          f"（静帧与项目说明已归档到 {dest.name}/）")
 
 
 if __name__ == "__main__":

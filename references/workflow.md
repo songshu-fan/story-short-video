@@ -12,17 +12,17 @@
 │   ├── series/head_voice.py       # 片头音轨按篇生成 + 音色自检
 │   └── episodes/001/              # 内置素材（片头/底图/引擎），无动态素材、无样例场景图
 │       └── v12/make_v12.py        # 渲染引擎（唯一入口）
-├── scripts/                       # check_env / start_story / check_ai_patterns / fill_shots
+├── scripts/                       # check_env / start_story / check_ai_patterns / panel_map / fill_shots
 └── references/                    # workflow / shot_schema / pitfalls / copywriting / anti-ai-check
 
 <root>/                            # STORY_ROOT 指定的工作目录
 └── episodes/<id>/                 # 每篇专属（id 为编号或短名）
     ├── meta.json  lines.json  script.json  shots.json
-    ├── caption.srt  vo.wav  vo/  head_voice.wav  导演稿.md
+    ├── caption.srt  vo.wav  vo/  head_voice.wav  导演稿.md  宫格对照清单.md
     ├── 场景图/                    # 任意张数本篇图片
     ├── 片头图/                    # head_16x9.jpg（片头底图）+ cover_2x3.jpg（封面底图）
     ├── 片头口型/                  # 本篇专属口型视频
-    └── 成片/                      # 正式片 + SRT
+    └── 成片/                      # 正式片 + SRT + 逐镜静帧 + 项目说明（v2.9.0 自动归档）
 ```
 
 ## 开工确认（先问再干）
@@ -91,18 +91,32 @@ python make_v12.py --episode "<root>/episodes/<id>/shots.json"             # 全
 
 - `--test N` 只渲前 N 秒，约 10 倍提速；输出 `test_v12_<id>.mp4` 在引擎目录，**提前返回，不生成正式片、静帧与项目说明**。
 - `--tail N` 只渲片尾定帧卡（N 是上限，缺省 8 秒，实际按卡窗口收紧到约 4 秒），输出 `tail_v12_<id>.mp4`：中性暗底 + 真实 ASS 字卡，几秒出片，专门验收结尾针，不渲全片、不生成正式片。**ASS 事件时间要整体减去偏移**，否则字卡不会出现在预览片里。本篇素材仍是占位图时预览自动改用中性暗底，不把第 001 篇画面当成品展示。
-- 无 `--test` / `--tail` 时才走正式流程：成片 `《标题》.mp4` 写到 `episodes/NNN/成片/`，文件名就是主题名，不加任何风格后缀；短版加 `_短版N秒` 以免覆盖全片。同时写同名 `.srt`、逐镜静帧 `still_v12_NN.png`、`项目说明_v12.json`。**后两者实际落在引擎目录（`<技能目录>/runtime/episodes/001/v12/`），需手动归档；项目说明的 `changes` 是通用模板文案，要改成本篇说明。**
+- 无 `--test` / `--tail` 时才走正式流程：成片 `《标题》.mp4` 写到 `episodes/NNN/成片/`，文件名就是主题名，不加任何风格后缀；短版加 `_短版N秒` 以免覆盖全片。同时写同名 `.srt`、逐镜静帧 `still_v12_NN.png`、`项目说明_v12.json`。**静帧与项目说明 v2.9.0 起自动落到 `成片/`**（`changes` 可由 `meta.json.changes` 覆盖）；只有不带 `--episode` 的 001 回归才落在引擎目录。
 - 不带 `--episode` 则渲染引擎内置素材的默认路径，用于回归复核；注意它会覆盖 `test_v12.mp4`，复核前先备份交付过的测试片。
 - 加 `--format 9:16` 可临时按竖版渲（不改 `shots.json`），用来对比同一篇的横竖两版；`shots.json` 已写 `format` 时以文件为准、命令行显式给的优先。**切画幅会整批重渲镜头**（缓存 key 含宽高）。
 
-## 出全片后的归档与校正（必做）
+## 出全片后的归档与校正（v2.9.0 起自动，这里只做校正）
+
+正式出片（无 `--test`/`--tail`）时引擎会直接把逐镜静帧 `still_v12_NN.png` 与 `项目说明_v12*.json` 写进本篇 `成片/`；`_render/` 里不再留需要手工复制的东西，旧版残留会被清掉。
 
 ```bash
+# 只有 001 回归（不带 --episode）才落在引擎目录，仍需手工归集
 cp <技能目录>/runtime/episodes/001/v12/still_v12_*.png <root>/episodes/<id>/成片/
-cp <技能目录>/runtime/episodes/001/v12/项目说明_v12.json <root>/episodes/<id>/成片/
 ```
 
-然后编辑 `项目说明_v12.json` 的 `changes` 字段（引擎写死的通用文案），换成 3~4 条本篇说明；再抽帧复核片头（无 NO. 编号）、后段画面与片尾定帧卡。ImageGen 出图右下角带水印，换篇前统一从顶部裁 16:9 去掉（见 `references/pitfalls.md`）。
+`项目说明_v12.json` 的 `changes` 默认已是当前实况（自动运镜、字号折行、3x 超采样等），要写本篇说明就在 `meta.json` 加 `"changes": ["…", "…"]`（3~4 条），下次出片引擎用它覆盖，不再需要手改 JSON。之后抽帧复核片头（无 NO. 编号）、后段画面与片尾定帧卡。ImageGen 出图右下角带水印，换篇前统一从顶部裁 16:9 去掉（见 `references/pitfalls.md`）。
+
+## 画面情节与旁白句对位（v2.9.0 起必做，宫格篇尤其）
+
+成片出现「画面比旁白慢半拍 / 整体滞后一句」，**九成是宫格出图时格位与句序错开一格**，不是引擎、不是缓存、不是音频：切图只认版式、填图只认文件名与 `--images` 顺序、引擎只认 `src` 下标，三道环节都不校验「这张画的是不是这一句」，于是错配被固化在图片里——**重渲、清缓存、改滤镜、换编码全都改不动**。
+
+| 时机 | 命令 | 作用 |
+|---|---|---|
+| 出图前 | `python scripts/panel_map.py --id <id> --panels 2\|4` | 按连续镜段把镜切成宫格段，逐格列出「格位 / 镜号 / 旁白原文 / 应画情节」，照表写提示词，错位在源头就排掉 |
+| 填图后 | `python scripts/panel_map.py --id <id> --check` | 缺图、`src` 越界、`note` 还是占位、宫格服务镜段不连续、相邻两镜同图 → 退出码 1，先修再渲染 |
+| 全程 | `fill_shots.py` 结尾自动刷新 `宫格对照清单.md` 并打印「镜号 \| 旁白句 \| 画面 note」 | 旁白说 A、note 写 B 一眼可见 |
+
+清单落在 `episodes/<id>/宫格对照清单.md`，带勾验列。**逐格读旁白那一列再看画面**，对不上就重出（图名带镜号，切完用 `--images` 显式传序），不要指望重渲。相近历史场景（宫殿/城垣/船队）像素差可能很大，**像素比对不能判语义对错**，只当白边/串图参考。
 
 ## 素材归属校验（新故事必须用本篇画面）
 
@@ -335,11 +349,11 @@ python scripts/make_cover.py ... --platform bilibili --image ".../shot_02.jpg"  
 
 ## 中间产物目录（2026-11-18 起）
 
-渲染某篇时的临时产物（`vo_v12.wav`、`sub_v12.ass`、`head.wav`、`concat_v12.txt`、`particles/caption_shade/spark.png`、`test_v12_*.mp4`、`still_v12_*.png`、`项目说明_v12.json`）一律写 `episodes/<id>/_render/`，不再回写引擎目录——原先渲染任何一篇都会覆盖 001 的 `vo_v12.wav`、`sub_v12.ass` 与逐镜静帧。001 自身（不带 `--episode`）仍用引擎目录，行为不变。归档时把 `_render/still_v12_*.png` 与 `项目说明_v12.json` 复制到本篇 `成片/`。
+渲染某篇时的临时产物（`vo_v12.wav`、`sub_v12.ass`、`head.wav`、`concat_v12.txt`、`particles/caption_shade/spark.png`、`test_v12_*.mp4`）一律写 `episodes/<id>/_render/`，不再回写引擎目录——原先渲染任何一篇都会覆盖 001 的 `vo_v12.wav`、`sub_v12.ass`。逐镜静帧与项目说明 v2.9.0 起直接写进 `成片/`（出全片时自动归档，无需手工复制）。
 
 ## 宫格出图：两宫格 / 四格（省积分，2026-11-18 起内置支持）
 
-逐镜单图最可控，但每镜一次出图。宫格图一次出 2 格或 4 格，用 `scripts/split_panels.py` 切成单镜图后照常填图，引擎不需要任何改动。
+逐镜单图最可控，但每镜一次出图。宫格图一次出 2 格或 4 格，用 `scripts/split_panels.py` 切成单镜图后照常填图，引擎不需要任何改动。**出图前先跑 `scripts/panel_map.py --panels 2|4` 排「格位↔镜号↔旁白原文」清单**（见「画面情节与旁白句对位」），照清单逐格写提示词——宫格最贵的错误就是错开一格，成片整体滞后一句还查不出来。
 
 | 方式 | ImageGen 画布 | 每格尺寸 | 切分后（16:9） | 切分后（9:16，加 `--format 9:16`） |
 |---|---|---|---|---|

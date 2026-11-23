@@ -115,6 +115,43 @@ def spread_slots(total, count):
     return [min(count - 1, int(j * count / total)) for j in range(total)]
 
 
+def print_line_map(ep, cfg, limit=24):
+    """填图后把「镜号 ↔ 旁白句 ↔ 画面 note」并排打出来：义对位自检的第一道眼睛。
+    画面配错句（整体滞后一句）在成片上只表现为「画面慢半拍」，看着像引擎/缓存问题；
+    在这里一眼就能发现——旁白说 A，note 写 B，那一格就是错的。"""
+    lp = ep / "lines.json"
+    if not lp.exists():
+        return
+    try:
+        lines = json.loads(lp.read_text(encoding="utf-8"))
+        if isinstance(lines, dict):
+            lines = lines.get("lines") or []
+    except Exception:
+        return
+    shots = cfg.get("shots") or []
+    print("  义对位自检（镜号 | 旁白句 | 画面 note）——看图时逐镜比对，配错句要重出图，不是重渲：")
+    for i, s in enumerate(shots[:limit]):
+        line = str(lines[i]).strip() if i < len(lines) else ""
+        note = str(s.get("note") or "").strip()
+        print(f"    镜{i:>2} | {line[:26]:<28} | {note[:26]}")
+    if len(shots) > limit:
+        print(f"    …（共 {len(shots)} 镜，完整表见 宫格对照清单.md）")
+
+
+def refresh_panel_map(ep, panels=0):
+    """刷新本篇「宫格对照清单.md」（零积分、纯本地）。"""
+    try:
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        import panel_map
+        lines, cfg = panel_map.load_episode(ep)
+        rows, images, motions = panel_map.collect(ep, lines, cfg)
+        md, _ = panel_map.build_md(ep, cfg.get("title") or ep.name, rows, images, motions, panels)
+        (ep / "宫格对照清单.md").write_text(md, encoding="utf-8")
+        print("  已刷新 宫格对照清单.md（出图/填图后逐格勾验：这一格画的是不是这一句）")
+    except Exception as e:
+        print(f"  [提示] 宫格对照清单生成失败（不影响填图）：{e}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--id", required=True)
@@ -131,6 +168,9 @@ def main():
     ap.add_argument("--pairs", action="store_true",
                     help="一镜两图：图片按 2 张一组配给每个镜（镜 k -> img2:2k,2k+1），"
                          "自动跳过动态镜；开工确认第 5 项选「一镜 2 张」时用")
+    ap.add_argument("--panels", type=int, default=0,
+                    help="出图方式：0=自动（按图名 _pNN 推断）/ 2=两宫格 / 4=四格；"
+                         "只影响「宫格对照清单.md」的分组排版，不动镜头表")
     ap.add_argument("--head-image",
                     help="片头底图路径；不给时若 head_image 为空则默认取中间那张本篇图")
     ap.add_argument("--host", choices=["ancient", "modern"],
@@ -312,6 +352,7 @@ def main():
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"  已更新 {cfg_path}")
     print("  提醒：换素材后仍需按情节填 beat/note；16:9 动态素材记得把 crop16x9 改 false")
+    print_line_map(ep, cfg)
     # 导演稿.md：建篇/填图/改片头底图后自动刷新（零积分、纯本地）。
     try:
         series_dir = pathlib.Path(__file__).resolve().parent.parent / "runtime" / "series"
@@ -320,6 +361,7 @@ def main():
         ne.write_director_doc(ep)
     except Exception as e:
         print(f"  [提示] 导演稿生成失败（不影响填图）：{e}")
+    refresh_panel_map(ep, a.panels or 0)
 
 
 if __name__ == "__main__":
