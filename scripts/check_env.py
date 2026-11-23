@@ -76,7 +76,7 @@ def main():
     # 交付脚本（技能目录 scripts/）：缺了会走到一半才发现，提前报出来
     for rel in ("scripts/start_story.py", "scripts/fill_shots.py",
                 "scripts/split_panels.py", "scripts/run_episode.py",
-                "scripts/make_cover.py"):
+                "scripts/make_cover.py", "scripts/check_ai_patterns.py"):
         hit = (HERE.parent / rel).exists()
         ok &= hit
         print(f"  [{'OK' if hit else '缺失'}] {rel}")

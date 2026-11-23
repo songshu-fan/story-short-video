@@ -29,7 +29,7 @@
 
 ## script.json（四段式剧本）
 
-与 `lines.json` 同目录。`lines.json` 保持**纯字符串数组**（TTS / SRT 链路不读 script.json），四段归属单独记在这里。
+与 `lines.json` 同目录。`lines.json` 保持**纯字符串数组**（TTS / SRT 链路不读 script.json），四段归属单独记在这里。**每句都是纯文本**：不带 markdown（`**`、`#`、反引号）、不带 emoji、不带弯引号 `“ ”`（统一 `「」` 或不用）；字数按汉字计，标点与空白不算——建篇前会跑 `scripts/check_ai_patterns.py` 硬拦（见 `references/anti-ai-check.md`）。
 
 | 字段 | 含义 |
 |---|---|

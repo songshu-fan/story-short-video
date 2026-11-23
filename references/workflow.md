@@ -12,8 +12,8 @@
 │   ├── series/head_voice.py       # 片头音轨按篇生成 + 音色自检
 │   └── episodes/001/              # 内置素材（片头/底图/引擎），无动态素材、无样例场景图
 │       └── v12/make_v12.py        # 渲染引擎（唯一入口）
-├── scripts/                       # check_env / start_story / fill_shots
-└── references/                    # 三份参考
+├── scripts/                       # check_env / start_story / check_ai_patterns / fill_shots
+└── references/                    # workflow / shot_schema / pitfalls / copywriting / anti-ai-check
 
 <root>/                            # STORY_ROOT 指定的工作目录
 └── episodes/<id>/                 # 每篇专属（id 为编号或短名）
@@ -47,6 +47,17 @@
 | 未出镜的镜 | 用他的**行动痕迹**承载因果：船队、奏报、金锭、空船坞、被翻过的海图 |
 | 一镜两图 | 两格**至少一格有人**（一格人物 / 一格环境·对手·器物），零成本把出镜率拉到 70% 左右，还自带切换感 |
 | 跨年龄段/换装 | 一句话通吃不了，按段落给 **2~3 套锚定句**，否则造型会莫名切换 |
+**建篇前稿检（必过，v2.8.0 起）**：旁白稿先过 A 层体检，有硬伤不许建篇。
+
+```bash
+python <技能目录>/scripts/check_ai_patterns.py --lines my_lines.json --format 16:9   # 退出码 0 才继续
+python <技能目录>/scripts/check_ai_patterns.py --lines my_lines.json --fix-quotes     # 弯引号换「」
+```
+
+- 硬伤＝emoji、`**`/markdown 残留、弯引号、半角 `-` 当破折号、半角标点混中文、A 层套话关键词；提示＝单句字数（横 22 / 竖 18）、破折号堆砌；
+- `start_story.py` 建篇时会再跑同一套规则，硬伤直接退出（不给 `--skip-ai-check` 不会写任何文件）；
+- B 层（三项排比、称呼统一、情感标签、假范围）与 C 层（判断锋利度）机器判不了，按 `references/anti-ai-check.md` 人工过。
+
 4. **再建篇/渲染**：图就位后先按题材判断说书人（**横版才有意义**：古代/神话/历史→`--host ancient` 默认，近现代/当代/现实→`--host modern`，见 SKILL.md「说书人选择」；竖版片头无人像，`--host` 不影响成片），再 `start_story.py --images-dir` 建篇——`head_image` 自动取中间那张本篇图作片头底图（避开首镜钩子与末镜收束，不额外生成片头图；`fill_shots.py --head-image` 可换）；片头口型按开工确认第 2 项——**仅横版**、选「生成」才做本篇专属 `head_video`（见下，此时音画同源），默认「不生成」则沿用内置固定口型只换音轨（接受近似唇形）。
 
 ## 画幅：横版 16:9 / 竖版 9:16（2026-11-18 一期）

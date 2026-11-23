@@ -124,6 +124,9 @@ def main():
                          '--cast "郑和=同一人物：深青官袍、黑色幞头、革带、身形清瘦、四十上下"。'
                          '写入 shots.json 的 cast，供写每镜提示词时前置')
     ap.add_argument("--draft-max", type=int, default=13, help="保留参数兼容，通用模式忽略")
+    ap.add_argument("--skip-ai-check", action="store_true",
+                    help="跳过旁白稿 A 层体检（emoji/弯引号/markdown/套话/半角破折号）。"
+                         "默认有硬伤就拒绝建篇：这些字符会进 TTS 与字幕")
     ap.add_argument("--root", help="工作目录；也可用环境变量 STORY_ROOT；默认当前目录")
     ap.add_argument("--images-dir", help="本篇场景图目录，按文件名排序取全部图片")
     ap.add_argument("--images-paths", nargs="*", default=[],
@@ -185,6 +188,26 @@ def main():
     lines = json.loads(pathlib.Path(lines_path).read_text(encoding="utf-8"))
     if not isinstance(lines, list) or not lines:
         raise SystemExit("旁白稿必须是非空 JSON 字符串数组")
+
+    # ---- 旁白稿 A 层体检（emoji/弯引号/markdown/套话/半角破折号）----
+    # 这些字符会同时污染 TTS（念乱码）与 ASS 字幕（缺字形出方块），所以默认硬拦；
+    # B 层（排比/称呼/情感标签）与 C 层（判断锋利度）机器判不了，仍靠人工。
+    if not a.skip_ai_check:
+        sys.path.insert(0, str(HERE))
+        import check_ai_patterns as aic
+        hard_n, warn_n, reports_ai = aic.run(lines, a.format)
+        for i, hard, warn, text in reports_ai:
+            for h in hard:
+                print(f"[稿检·硬伤] 句{i + 1}：{h}  ← {text[:32]}")
+            for w in warn:
+                print(f"[稿检·提示] 句{i + 1}：{w}")
+        if hard_n:
+            raise SystemExit(
+                f"旁白稿体检未通过：{hard_n} 处硬伤。先改稿再建篇"
+                "（emoji / markdown / 弯引号 / 套话 / 半角破折号会进 TTS 与字幕）；"
+                "确实要强行建篇加 --skip-ai-check。")
+        print(f"[稿检] 0 处硬伤 / {warn_n} 处提示，通过（提示项人工判断）"
+              if warn_n else "[稿检] 0 处硬伤，通过")
 
     meta = {"id": a.id, "volume": a.volume, "title": a.title,
             "series": a.series, "source": "用户提供"}
