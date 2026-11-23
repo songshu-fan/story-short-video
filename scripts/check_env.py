@@ -77,7 +77,7 @@ def main():
     for rel in ("scripts/start_story.py", "scripts/fill_shots.py",
                 "scripts/split_panels.py", "scripts/run_episode.py",
                 "scripts/make_cover.py", "scripts/check_ai_patterns.py",
-                "scripts/panel_map.py"):
+                "scripts/panel_map.py", "scripts/set_titles.py"):
         hit = (HERE.parent / rel).exists()
         ok &= hit
         print(f"  [{'OK' if hit else '缺失'}] {rel}")

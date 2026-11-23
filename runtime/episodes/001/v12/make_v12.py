@@ -78,7 +78,7 @@ ACCENTS = {2, 5, 12}
 # 画面运动幅度系数：1.0=原速；0.5=半速。只缩放 y 的垂直平移幅度。
 # 画面只做上下浮动：zoom 固定、x 固定，无推近脉冲、无叠加微抖、无逐帧颗粒。
 # 不改镜头数/字幕/切镜点；片头说书人与片尾针不在此链。
-MOTION_SCALE = 0.5
+MOTION_SCALE = 0.75
 # 超采样倍数：zoompan 的 y 按整数像素取裁剪窗，慢速下 1080p 每帧位移不足 1px
 # 会卡顿。先把静帧放大 3x 作为**源域**（每帧位移 >=1px），再让 zoompan 直接输出
 # 1920x1080——量化粒度仍是 1 源像素 = 1/3 输出像素，与旧做法（zoompan 输出 5760
@@ -311,22 +311,22 @@ def _auto_move(note, beat, last):
 
     # 结尾空镜优先拉远，收束感最强
     if last and kw("空镜", "无人", "留白", "雪", "海", "城墙", "原野", "废墟"):
-        return {"type": "zoom", "amount": 0.04, "dir": "out"}
+        return {"type": "zoom", "amount": 0.06, "dir": "out"}
     if kw("空镜", "无人", "留白", "远景", "海面", "海上", "山川", "群山", "城墙",
           "雪原", "天空", "荒原", "戈壁", "沙漠", "草原", "江面", "船队", "舰队"):
-        return {"type": "pan_x", "amount": 0.25}
+        return {"type": "pan_x", "amount": 0.3}
     if kw("人群", "群臣", "朝会", "市集", "码头", "营帐", "列阵", "军阵", "街道",
           "人流", "长街", "广场", "船坞", "宴席", "大殿"):
-        return {"type": "pan_x", "amount": 0.2}
+        return {"type": "pan_x", "amount": 0.26}
     if kw("战斗", "厮杀", "交战", "冲锋", "混战", "对峙", "攻城", "血战", "追击"):
-        return {"type": "zoom", "amount": 0.06, "dir": "in"}
+        return {"type": "zoom", "amount": 0.08, "dir": "in"}
     if kw("特写", "手部", "器物", "奏报", "奏折", "金锭", "银箱", "账册", "罗盘",
           "烛", "朱笔", "玺", "印", "碗", "茶", "刀", "信"):
-        return {"type": "zoom", "amount": 0.05, "dir": "in"}
+        return {"type": "zoom", "amount": 0.07, "dir": "in"}
     if kw("人物", "背影", "侧后", "中景", "近景", "独处", "对话", "跪", "站",
           "坐", "面孔", "书生", "官员", "主角", "主人翁"):
-        return {"type": "zoom", "amount": 0.04, "dir": "in"}
-    return {"type": "zoom", "amount": 0.03, "dir": "in"}
+        return {"type": "zoom", "amount": 0.06, "dir": "in"}
+    return {"type": "zoom", "amount": 0.05, "dir": "in"}
 
 
 def resolve_moves(shots):

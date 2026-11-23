@@ -430,10 +430,22 @@ def write_director_doc(ep):
     for s in shots:
         i = s.get("n", 0)
         text = lines[i] if 0 <= i < len(lines) else ""
-        direction = "上→下" if i % 2 == 0 else "下→上"   # 正片奇数镜上→下、偶数镜下→上
+        # 运动列：v2.7.0 起静态镜默认按 note 自动选，不再是固定的上下浮动
+        if s.get("motion"):
+            move = "动态（不叠位移）"
+        else:
+            mv = dict(s.get("move") or {})
+            kind = str(mv.get("type", "")).strip().lower()
+            auto_off = kind in ("legacy", "float", "pan_y_legacy") or mv.get("auto") is False
+            if auto_off:
+                move = "旧版浮动 " + ("上→下" if i % 2 == 0 else "下→上")
+            elif kind in ("auto", "auto_move") or mv.get("auto") is True or not kind:
+                move = "auto（按 note 推断）"
+            else:
+                move = kind + (f" {mv.get('amount')}" if mv.get("amount") is not None else "")
         rows.append(
             f"| {i + 1} | {s.get('beat', '')} | {text} | "
-            f"{_src_label(s.get('src'), images, motions)} | {direction} | "
+            f"{_src_label(s.get('src'), images, motions)} | {move} | "
             f"{s.get('note', '')} |")
 
     # 片头模式（shots.json.head）：host=说书人 5 秒口播；title=只有标题卡，无人像
@@ -457,6 +469,27 @@ def write_director_doc(ep):
     else:
         head_desc = f"5s 说书人：「{head_cfg.get('text') or cfg.get('head_text', '')}」"
 
+    # 发布候选（v2.10.0）：三组「标题 + 一句描述」，由 set_titles.py 写进 script.json
+    titles = script.get("titles") or []
+    if titles:
+        trows = "\n".join(
+            f"| {i} | {t.get('title', '')} | {t.get('desc', '')} |"
+            for i, t in enumerate(titles, 1))
+        titles_block = (
+            "## 发布候选（三组标题与描述）\n\n"
+            "| # | 标题 | 描述 |\n|---:|---|---|\n"
+            + trows + "\n\n"
+            f"- 成片名仍用纯主题名「{cfg.get('title', '')}」，发布标题与描述只用在平台侧，不进画面与字幕。\n"
+            "- 换一批：重跑 `scripts/set_titles.py` 覆盖即可。\n\n"
+        )
+    else:
+        titles_block = (
+            "## 发布候选（三组标题与描述）\n\n"
+            "（还没写入：`python scripts/set_titles.py --id <id> --root <root> "
+            "--cand \"标题一|描述一\" --cand \"标题二|描述二\" --cand \"标题三|描述三\"`，"
+            "写好后本表自动出现）\n\n"
+        )
+
     doc = f"""# 导演稿：《{cfg.get('title', '')}》（{cfg.get('id', '')}）
 
 - 卷：{cfg.get('volume', '')} ｜ 引擎：{cfg.get('engine', 'v12')}
@@ -469,7 +502,9 @@ def write_director_doc(ep):
 
 > 本文件由脚本自动生成（建篇/填图后刷新）；逐镜备注的正式数据在 shots.json 的 note。
 
-| 镜 | 段 | 旁白 | 画面素材 | 上下浮动 | 画面备注 |
+""" + titles_block + f"""## 逐镜表
+
+| 镜 | 段 | 旁白 | 画面素材 | 运动 | 画面备注 |
 |--:|---|---|---|---|---|
 """ + "\n".join(rows) + "\n"
     (ep / "导演稿.md").write_text(doc, encoding="utf-8")
