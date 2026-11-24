@@ -211,6 +211,12 @@ def main():
         print(f"[稿检] 0 处硬伤 / {warn_n} 处提示，通过（提示项人工判断）"
               if warn_n else "[稿检] 0 处硬伤，通过")
 
+    # 顶部角标是「系列名 · 卷名」（make_v12.py 用 SERIES_NAME + meta.volume），
+    # 两者填同一个词会渲出「现实观察 · 现实观察」。这里只提醒，不改用户给的值。
+    if a.series.strip() == a.volume.strip():
+        print(f"[角标提示] --series 与 --volume 都是「{a.series}」，顶部会显示「{a.series} · {a.series}」；"
+              "建议卷名换成站内一层（如「职场」「卷首」）。改卷名改 meta.json 的 volume，改 shots.json 无效。")
+
     meta = {"id": a.id, "volume": a.volume, "title": a.title,
             "series": a.series, "source": "用户提供"}
     ep = root / "episodes" / a.id

@@ -19,7 +19,9 @@
 └── episodes/<id>/                 # 每篇专属（id 为编号或短名）
     ├── meta.json  lines.json  script.json  shots.json
     ├── caption.srt  vo.wav  vo/  head_voice.wav  导演稿.md  宫格对照清单.md
-    ├── 场景图/                    # 任意张数本篇图片
+    ├── 原图/                      # 宫格原图（只放两宫格/四格；单幅 16:9 横图放错地方会被劈成两半）
+    ├── 片头源图/                  # 片头/封面那张横图，不许混进 原图/
+    ├── 场景图/                    # 切好的单镜图（本篇图片，1920x1080）
     ├── 片头图/                    # head_16x9.jpg（片头底图）+ cover_2x3.jpg（封面底图）
     ├── 片头口型/                  # 本篇专属口型视频
     └── 成片/                      # 正式片 + SRT + 逐镜静帧 + 项目说明（v2.9.0 自动归档）
@@ -362,6 +364,25 @@ python scripts/make_cover.py ... --platform bilibili --image ".../shot_02.jpg"  
 - `ffpath.py` 解析顺序：`FFMPEG_BIN`/`FFMPEG_PATH`/`FFPROBE_PATH` → `shutil.which` → `C:\ffmpeg\bin`、choco、scoop、winget links、`/usr/local/bin` 等。
 - `check_env.py` 会打印实际解析到的 ffmpeg/ffprobe 路径，而不是只说「缺失」。
 - `episodes/001` 已缩为**纯模板篇**：只保留说书人素材与镜头运动样板，它的 11 张场景图随精简包移除，不能出片；景别模板改由 `runtime/series/lens_default.json` 提供。
+
+### 换机器跑（v2.11.6 起）
+
+同一篇可以换机器做，但下面四件东西不跟人走，先验再跑：
+
+| 依赖 | 为什么卡 | 验法 |
+| --- | --- | --- |
+| `edge_tts` | 云端/新机器不带，`start_story.py` 建篇就在 TTS 处挂掉 | `python -c "import edge_tts; print(edge_tts.__version__)"`，缺就 `pip3 install edge-tts` |
+| 中文字体 | ASS 里字体名硬编码 `Microsoft YaHei`，Linux 无此名→落回默认字体，字宽与折行全变 | `fc-list :lang=zh \| head`，Linux 装 `fonts-noto-cjk` |
+| 封面字体 | `make_cover.py` 原来只认 `C:/Windows/Fonts`，非 Windows 直接退出（v2.11.6 已修，候选 + `fc-match` 兜底） | 出一张封面看有没有报 `找不到字体` |
+| `ffmpeg` 版本 | 引擎抽静帧带 `-fps_mode`，ffmpeg 4.x 报 `Unrecognized option`（v2.11.6 已加回退） | `ffmpeg -version`，4.x 属预期内可跑 |
+
+项目目录绑机器：别的机器上的 `episodes/<id>` 不是同一份。交付时按 CDN 链接给，别把「在我本机 D 盘」当路径告诉用户。
+
+### 收尾报错怎么判成败（v2.11.6 起）
+
+- `Unrecognized option 'fps_mode'` / 抽静帧失败 / `项目说明` 归档失败：**都属收尾非致命**。判据是 `成片/<篇名>.mp4` 的时长与体积对不对（`ffprobe -show_entries format=duration,size`），对就是成功，别因为退出码非 0 重渲一遍。
+- 真失败的样子：`成片/` 里没有 mp4，或 mp4 只有几 MB、时长明显短于旁白总时长。
+- 静帧缺了可以事后补：`ffmpeg -y -ss <秒> -i 成片/xx.mp4 -frames:v 1 成片/静帧/镜NN.jpg`。
 
 ## 中间产物目录（2026-11-18 起）
 

@@ -133,6 +133,12 @@ def pick_layout(path, panels, layout_arg, fmt="16:9"):
         return (2, 2)
     im = Image.open(path)
     ratio = im.width / im.height
+    # 2.11.6：单幅 16:9（片头/封面横图、或误放的单图）被当成两宫格，会从中间劈成两半。
+    # 两宫格的画布应该是 2×(4:3)≈2.67:1 或 2:1，绝不会正好是 16:9（1.78）。
+    if panels == 2 and fmt != "9:16" and 1.58 <= ratio <= 1.92:
+        raise SystemExit(f"{path.name} 是 {im.width}x{im.height}（≈16:9 单幅），不像两宫格画布：\n"
+                         "  这多半是片头/封面横图或单图，别当宫格切——请移到单独目录（如 片头源图/）；\n"
+                         "  确实要按两格切，显式加 --layout 1x2 或 --layout 2x1")
     if fmt == "9:16":
         # 竖版两宫格必须是「横版画布左右两格」，竖画布上下叠出来的两格是 4:3 横图，切 9:16 会切没主体
         if ratio >= 1.2:
@@ -189,12 +195,21 @@ def main():
           f"（画幅 {a.format} / 单镜 {TARGETS[a.format][0]}x{TARGETS[a.format][1]}）"
           + ("（dry-run，不写盘）" if a.dry_run else ""))
     total = 0
+    skipped = []
     for g in grids:
-        layout = pick_layout(g, a.panels, a.layout, a.format)
+        try:
+            layout = pick_layout(g, a.panels, a.layout, a.format)
+        except SystemExit as e:                  # 疑似片头/封面横图：跳过这一张，其余照切
+            skipped.append(g.name)
+            print(f"[跳过] {e}")
+            continue
         print(f"[{g.name}] 版式 {layout[0]}x{layout[1]}")
         total += len(split_one(g, layout, out_dir, a.quality, a.pad, a.anchor, a.dry_run, a.format))
 
     print(f"\n共切出 {total} 张单镜场景图" + ("（dry-run 未写盘）" if a.dry_run else ""))
+    if skipped:
+        print(f"注意：跳过 {len(skipped)} 张不像宫格画布的图（{'、'.join(skipped)}）——"
+              "片头/封面横图请放 片头源图/，单图请走单图流程；确实要切就显式 --layout。")
     if a.format == "9:16":
         print("提示：竖版成片是 1080x1920，切完抽帧核对主体是否在中轴、上下是否被切；"
               "本篇场景图目录建议单独建（场景图_竖/），不要和横版混用。")

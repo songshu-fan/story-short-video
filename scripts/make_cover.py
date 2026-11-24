@@ -19,18 +19,25 @@
 """
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 import numpy as np
 
-# ---- 字体（Windows 自带；缺了报错提示） ----
+# ---- 字体（Windows / Linux / macOS 三套候选；全缺时走 fc-match 兜底） ----
 FONT_TITLE_CANDIDATES = ["C:/Windows/Fonts/STZHONGS.TTF", "C:/Windows/Fonts/simsun.ttc",
-                         "C:/Windows/Fonts/msyhbd.ttc"]
+                         "C:/Windows/Fonts/msyhbd.ttc",
+                         "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+                         "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+                         "/System/Library/Fonts/Supplemental/Songti.ttc",
+                         "/System/Library/Fonts/PingFang.ttc"]
 FONT_BODY_CANDIDATES = ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/msyhbd.ttc",
-                        "C:/Windows/Fonts/simhei.ttf"]
-
+                        "C:/Windows/Fonts/simhei.ttf",
+                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+                        "/System/Library/Fonts/PingFang.ttc"]
 GOLD = (227, 197, 139)          # kicker / 金线
 WHITE = (255, 255, 255)
 SUB_WHITE = (232, 228, 220)
@@ -47,6 +54,16 @@ OUT_NAMES = {
 }
 
 
+def _fc_match(pattern):
+    """fontconfig 兜底：返回任意一款中文字体的实际路径（Linux / mac 常见）。"""
+    try:
+        out = subprocess.run(["fc-match", "-f", "%{file}", pattern],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+        return out or None
+    except Exception:
+        return None
+
+
 def pick_font(candidates, size):
     for p in candidates:
         if Path(p).exists():
@@ -54,7 +71,15 @@ def pick_font(candidates, size):
                 return ImageFont.truetype(p, size)
             except Exception:
                 continue
-    raise SystemExit("找不到可用中文字体，请检查 C:/Windows/Fonts（需华文中宋/微软雅黑之一）")
+    for pattern in ("Noto Serif CJK SC:bold", "Noto Sans CJK SC", "sans-serif:lang=zh"):
+        p = _fc_match(pattern)
+        if p and Path(p).exists():
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                continue
+    raise SystemExit("找不到可用中文字体：Windows 需华文中宋/微软雅黑，Linux/mac 需 Noto CJK 或苹方"
+                     "（Linux 自查：fc-list :lang=zh）")
 
 
 def wrap_cjk(text, font, max_w):

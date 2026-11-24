@@ -239,12 +239,18 @@ def main():
         print(f"  片头说书人 -> {a.host}（{'古装' if a.host == 'ancient' else '现代休闲学者'}）")
 
     # ---- 片头底图：默认取中间那张本篇图（避开首镜钩子与末镜收束） ----
+    head_mode = (cfg.get("head") or {}).get("mode")
     if a.head_image:
         p = resolve_path(a.head_image, ep)
         if not p.exists():
             raise SystemExit(f"--head-image 图片不存在：{p}")
         cfg["head_image"] = rel_to_ep(p, ep)
         print(f"  片头底图 -> {cfg['head_image']}")
+    elif head_mode == "none":
+        # 2.11.6：无片头（D）时引擎根本不读 head_image，别再塞一张场景图进去把字段弄脏
+        if cfg.get("head_image"):
+            cfg["head_image"] = None
+        print("  片头形态 none：不设 head_image（封面图另外用 head_cover.py --cover-only 出）")
     elif cfg.get("images") and not cfg.get("head_image"):
         imgs = cfg["images"]
         cfg["head_image"] = imgs[len(imgs) // 2]

@@ -1494,11 +1494,29 @@ def main():
             old.unlink()
         frames = sorted({int(round(s * FPS)) for s in stills})
         sel = "+".join(f"eq(n,{f})" for f in frames)
-        run(["ffmpeg", "-y", "-hide_banner", "-v", "error", "-i", str(final),
+        # 2.11.6：-fps_mode 老版本 ffmpeg 不认（4.x 报 Unrecognized option），退 -vsync（语义等价）。
+        # 本步只做验收归档，成片此刻已落 成片/，抽帧失败不许把成功出片报成失败。
+        still_cmds = [
+            ["ffmpeg", "-y", "-hide_banner", "-v", "error", "-i", str(final),
              "-vf", f"select='{sel}'", "-fps_mode", "vfr",
-             "-start_number", "1", "still_v12_%02d.png"])
+             "-start_number", "1", "still_v12_%02d.png"],
+            ["ffmpeg", "-y", "-hide_banner", "-v", "error", "-i", str(final),
+             "-vf", f"select='{sel}'", "-vsync", "vfr",
+             "-start_number", "1", "still_v12_%02d.png"],
+        ]
+        stills_ok = False
+        for cmd in still_cmds:
+            try:
+                run(cmd)
+                stills_ok = True
+                break
+            except RuntimeError:
+                for stale in WORK.glob("still_v12_*.png"):
+                    stale.unlink()
+        if not stills_ok:
+            print("[静帧] 抽帧失败（当前 ffmpeg 不支持 fps_mode/vsync vfr），成片已完成，跳过静帧归档")
         # 自动归档（v2.9.0）：静帧直接跟着成片落在 成片/，不用再手工 cp 出 _render/
-        if dest.resolve() != WORK.resolve():
+        if stills_ok and dest.resolve() != WORK.resolve():
             for f in sorted(WORK.glob("still_v12_*.png")):
                 shutil.move(str(f), str(dest / f.name))
 

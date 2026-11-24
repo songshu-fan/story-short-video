@@ -5,6 +5,17 @@
 「故事转视频」里成本最低的一条产线：一份中文旁白稿 → 四段式分镜 → 一句一镜 → 写实剧照风场景图 → 卡拉OK字幕 → 片头（说书人 / 无人像标题卡）→ 结尾金句定帧卡 → 三平台封面。
 除场景图与片头/封面专属图要花 ImageGen 积分外，TTS、字幕、运镜、转场、封面排版全部本地零积分。
 
+## 2.11.6（2026-11-24）兼容与防护补丁：跨机器可跑、收尾不误报、横图不被劈
+
+出自 `018_jishu`（横版说理型、片头 D、两宫格 8 张、云主机 Linux 全链路）的实测踩坑。
+
+- **抽静帧做版本容错**（`runtime/episodes/001/v12/make_v12.py`）：`-fps_mode vfr` 先试，遇 `Unrecognized option 'fps_mode'`（ffmpeg 4.x）自动退 `-vsync vfr`；两步都失败只打印「成片已完成，跳过静帧归档」，用 `stills_ok` 关掉后续归档移动。**成片此前已写好，不能再让收尾步骤把它报成失败**。
+- **封面字体跨平台**（`scripts/make_cover.py`）：字体候选从「只认 `C:/Windows/Fonts`」扩到 Linux（`Noto Serif/Sans CJK`、`wqy`）与 mac（`Songti`/`PingFang`/`Hiragino`），再加 `fc-match -f %{file}` 兜底（新增 `import subprocess`）；报错文案改成跨平台提示。原版在 Linux 直接 `SystemExit`。
+- **角标同词告警**（`scripts/start_story.py`）：写 meta 前若 `series.strip() == volume.strip()`，打印 `[角标提示]`——顶部角标是「系列 · 卷名」，同词会渲成「现实观察 · 现实观察」。提示里同时说明**改卷名改 `meta.json.volume`，改 `shots.json.volume` 无效**（引擎只读 meta）。
+- **拒绝把单幅横图当宫格切**（`scripts/split_panels.py`）：`pick_layout` 对 `panels==2 且 fmt!=9:16 且 1.58<=ratio<=1.92` 报错并指明「这多半是片头/封面横图」；主循环改 `try/except SystemExit` **跳过该张继续**，末尾汇总「跳过 N 张」。
+- **D 模式不脏字段**（`scripts/fill_shots.py`）：`head.mode == "none"` 时不再默认塞 `head_image`（必要时清空）。
+- **文档口径**：`SKILL.md` 开工确认新增**第 0 项叙事形态（故事型/说理型）**、三条前置（第 0 项先问 / 钩子先定 / 先确认机器）、硬约束 11f 现代题材写时代锚定、11g 宫格与片头横图分目录、11h 角标＝系列·卷名、11a 天生带字清单扩到屏幕/表格/铭牌、验收清单加 8 条；`references/copywriting.md` 新增「选题禁忌：不给一群人下定义（身份→行为改写模板）」+ 自检加一条；`references/workflow.md` 新增「换机器跑」依赖表、「收尾报错怎么判成败」、目录契约补 `原图/` 与 `片头源图/`。
+
 ## 2.11.5（2026-11-24）片头形态加 D「无片头」：正片从 0:00 起
 
 - 开工确认第 3 项由 3 选扩成 4 选：A 说书人·内置换音轨 / B 说书人·真口型 / C 无人像标题卡 / **D 无片头**。**横竖版都问**（v2.11.0 起「竖版跳过第 3 项」作废）：横版给四项，竖版只给 C/D（竖版永远不出说书人）。确认项总数固定 8 项，不再有「竖版 7 项」。
