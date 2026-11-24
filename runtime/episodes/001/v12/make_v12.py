@@ -532,10 +532,10 @@ if EPISODE_ARG:
         if not hv.exists():
             raise RuntimeError(f"shots.json.head_video 指向的文件不存在：{hv}")
         HEAD_VIDEO = hv
-    # 片头只有标题卡、且明确关掉口播时，跳过合成（省一次 TTS）
+    # 片头只有标题卡、且明确关掉口播时，跳过合成（省一次 TTS）；无片头同理不合成
     _hmode = str((cfg.get("head") or {}).get("mode", "host")).strip().lower()
     _hvoice = bool((cfg.get("head") or {}).get("voice", True))
-    if (_hmode == "title" and not _hvoice):
+    if _hmode == "none" or (_hmode == "title" and not _hvoice):
         pass
     elif HEAD_TEXT.strip() != (V4 / "ref_text.txt").read_text(encoding="utf-8").strip():
         sys.path.insert(0, str(ASSETS.parent / "series"))
@@ -572,13 +572,24 @@ if EPISODE_ARG:
     #        voice 默认 true：保留片头口播与字幕（只是没有人像）；false 则片头纯静音无字幕
     head_cfg = cfg.get("head") or {}
     HEAD_MODE = str(head_cfg.get("mode", "host")).strip().lower()
-    if HEAD_MODE not in ("host", "title"):
-        raise RuntimeError(f"shots.json.head.mode 只能是 host / title，收到：{HEAD_MODE}")
+    if HEAD_MODE not in ("host", "title", "none"):
+        raise RuntimeError(f"shots.json.head.mode 只能是 host / title / none，收到：{HEAD_MODE}")
     # 竖版不出现说书人：host 自动降级为 title 卡（口播照旧保留），不再依赖人像素材。
     if FORMAT == "9:16" and HEAD_MODE == "host":
         print("[画幅] 9:16 竖版：片头不出现说书人，自动改为标题卡 + 保留口播")
         HEAD_MODE = "title"
     HEAD_VOICE_ON = True if HEAD_MODE == "host" else bool(head_cfg.get("voice", True))
+    # ---- 无片头（v2.11.5）：head.mode = "none" ----
+    # 故意不删片头链、不重排输入槽：把片头段压到 2 帧（0.08s）、xfade 同步压到 0.08s，
+    # 正片第一镜从第 0 秒起就是画面，观感上等于没有片头。音频只拼一段 0.08s 静音，
+    # 不生成 head_voice.x；片头字幕不挂。EXIT_AT/BODY_SHIFT 归零，字幕与切点自然对齐。
+    if HEAD_MODE == "none":
+        HEAD_LEN = 0.08
+        JOIN_XF = HEAD_LEN
+        HEAD_VOICE_ON = False
+        EXIT_AT = 0.0
+        BODY_SHIFT = 0.0
+        print("[片头] 无片头：片头段压至 0.08s（2 帧），正片从 0:00 起")
     if HEAD_MODE == "title":
         hlen = head_cfg.get("len")
         if hlen is None and HEAD_VOICE_ON:

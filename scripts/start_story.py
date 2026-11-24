@@ -101,9 +101,11 @@ def main():
                     help="系列名（片头卷名行与片尾落款），非本系列故事记得改，如「现代人物志」")
     ap.add_argument("--host", choices=["ancient", "modern"], default="ancient",
                     help="片头说书人：ancient=古装（默认，古代/神话/历史题材）；modern=现代休闲学者（近现代/当代/现实题材）")
-    ap.add_argument("--head-mode", choices=["host", "title"], default="host",
+    ap.add_argument("--head-mode", choices=["host", "title", "none"], default="host",
                     help="片头形式：host=说书人 5 秒口播（默认）；"
-                         "title=只留标题卡+底图、不出现人像，时长不写死 5 秒")
+                         "title=只留标题卡+底图、不出现人像，时长不写死 5 秒；"
+                         "none=无片头（正片从 0:00 起，不生成片头音轨、不挂片头字幕，"
+                         "片头/封面图仍要出，只供封面用）")
     ap.add_argument("--format", choices=["16:9", "9:16"], default="16:9",
                     help="画幅：16:9 横版（默认）/ 9:16 竖版。竖版片头不出现说书人，"
                          "自动改为标题卡 + 保留口播；字幕按竖屏安全区重排")
@@ -309,8 +311,10 @@ def main():
         "id": meta["id"], "title": meta["title"], "volume": meta["volume"],
         "host": a.host,
         "format": a.format,
-        "head": {"mode": a.head_mode, "len": a.head_len,
-                 "voice": (a.head_mode == "host") or (not a.no_head_voice)},
+        "head": {"mode": a.head_mode,
+                 "len": (None if a.head_mode == "none" else a.head_len),
+                 "voice": (a.head_mode == "host")
+                          or (a.head_mode == "title" and not a.no_head_voice)},
         "engine": "v12",
         "render": render,
         "status": status,
@@ -343,9 +347,9 @@ def main():
         cfg["cast"] = casts
     (ep / "shots.json").write_text(
         json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    # 片头只有标题卡且关掉口播时没有音轨，不必合成片头 TTS
+    # 片头只有标题卡且关掉口播、或干脆没有片头时，都没有音轨，不必合成片头 TTS
     hv_path = None
-    if a.head_mode == "host" or not a.no_head_voice:
+    if a.head_mode == "host" or (a.head_mode == "title" and not a.no_head_voice):
         hv_path = hv.ensure(ep, cfg["head_text"])
     # 导演稿.md：把分镜/旁白/素材/备注汇成一份可读文档（零积分，可随时重跑刷新）。
     ne.write_director_doc(ep)
@@ -353,7 +357,10 @@ def main():
     engine = RUNTIME / "episodes/001/v12/make_v12.py"
     helper = HERE / "fill_shots.py"
     # 片头时长：显式给了就用；host 默认 5.0；title 有口播时按语音实测（与引擎同一口径）
-    if a.head_len is not None:
+    # （v2.11.5）：无片头时片头段只剩 0.08s（2 帧），正片从 0:00 起
+    if a.head_mode == "none":
+        head_est = 0.08
+    elif a.head_len is not None:
         head_est = a.head_len
     elif a.head_mode == "host":
         head_est = 5.0
@@ -370,7 +377,9 @@ def main():
              else "（竖版 1080x1920，片头无人像、字幕按竖屏安全区重排）"))
     print(f"  状态：{status}")
     print(f"  结尾针：金句「{script['needle']}」+ 片尾定帧卡 {a.tail_hold}s")
-    if a.head_mode == "host":
+    if a.head_mode == "none":
+        print("  片头：无片头（正片从 0:00 起，不生成片头音轨与片头字幕）")
+    elif a.head_mode == "host":
         print("  片头：说书人 5 秒口播（head_voice.wav，原说书人音色、默认不变速）")
     elif not a.no_head_voice:
         print(f"  片头：标题卡+底图，无人像；保留口播与字幕（{head_est:.2f}s 跟着语音走，不再固定 5 秒）")

@@ -448,9 +448,11 @@ def write_director_doc(ep):
             f"{_src_label(s.get('src'), images, motions)} | {move} | "
             f"{s.get('note', '')} |")
 
-    # 片头模式（shots.json.head）：host=说书人 5 秒口播；title=只有标题卡，无人像
+    # 片头模式（shots.json.head）：host=说书人 5 秒口播；title=只有标题卡，无人像；none=无片头
     head_cfg = cfg.get("head") or {}
-    if str(head_cfg.get("mode", "host")).lower() == "title":
+    if str(head_cfg.get("mode", "host")).lower() == "none":
+        head_desc = "无片头：正片从 0:00 起，不挂片头音轨与片头字幕"
+    elif str(head_cfg.get("mode", "host")).lower() == "title":
         hlen = head_cfg.get("len")
         voice = bool(head_cfg.get("voice", True))
         if hlen is None and voice:
@@ -468,6 +470,14 @@ def write_director_doc(ep):
                      if voice else f"只有标题卡+底图，无人像、无口播，{float(hlen):.2f}s")
     else:
         head_desc = f"5s 说书人：「{head_cfg.get('text') or cfg.get('head_text', '')}」"
+
+    # 片头底图一行：无片头时这张图不参与合成，只作封面源图
+    _no_head = str(head_cfg.get("mode", "host")).lower() == "none"
+    if _no_head:
+        head_img_line = (f"{head_img}（无片头不参与合成，只作封面源图）" if head_img
+                         else "（无片头，不出片头底图，封面另出）")
+    else:
+        head_img_line = head_img if head_img else "（未设置，沿用引擎通用底图 bg1.jpg）"
 
     # 发布候选（v2.11.0）：三组「标题 + 核心思想 + 描述」，由 set_titles.py 写进 script.json
     titles = script.get("titles") or []
@@ -496,7 +506,7 @@ def write_director_doc(ep):
 - 卷：{cfg.get('volume', '')} ｜ 引擎：{cfg.get('engine', 'v12')}
 - 镜头数 {len(shots)}（= 旁白句数）｜ 旁白 {chars} 字 ｜ 四段 {seg}
 - 片头（{head_desc}）
-- 片头底图：{head_img if head_img else '（未设置，沿用引擎通用底图 bg1.jpg）'}
+- 片头底图：{head_img_line}
 - 结尾针：金句「{needle}」+ 片尾定帧卡 {ending.get('hold', 2.5)}s
 - 图片 {len(images)} 张 ｜ 动态素材 {len(motions)} 段
 - 状态：{cfg.get('status', '')}
@@ -515,3 +525,4 @@ def write_director_doc(ep):
 
 if __name__ == "__main__":
     main()
+

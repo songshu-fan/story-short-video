@@ -55,6 +55,8 @@ def main():
     ap.add_argument("--trim-bottom", type=float, default=0.06,
                     help="片头图裁掉的底部比例（去平台水印），默认 0.06；水印已不可见可设 0")
     ap.add_argument("--quality", type=int, default=92)
+    ap.add_argument("--cover-only", action="store_true",
+                    help="只出封面（片头形态 D 无片头时用）：跳过 head_16x9.jpg，只切 cover_2x3.jpg")
     a = ap.parse_args()
 
     from PIL import Image
@@ -70,20 +72,28 @@ def main():
     if W / H < 1.4:
         raise SystemExit(f"这张图是 {W}x{H}，不是横图；片头图请出 16:9（如 2048x1152）")
 
-    head = crop_16x9_dewatermark(im, a.trim_bottom).resize(HEAD_SIZE, Image.LANCZOS)
     head_path = out / "head_16x9.jpg"
-    head.save(head_path, quality=a.quality, subsampling=2)
+    if not a.cover_only:
+        head = crop_16x9_dewatermark(im, a.trim_bottom).resize(HEAD_SIZE, Image.LANCZOS)
+        head.save(head_path, quality=a.quality, subsampling=2)
 
     cover = vertical_slice(im, a.cover_x).resize(COVER_SIZE, Image.LANCZOS)
     cover_path = out / "cover_2x3.jpg"
     cover.save(cover_path, quality=a.quality, subsampling=2)
 
     print(f"横图 {src.name} {W}x{H}")
-    print(f"  片头底图 -> {head_path.name}  {HEAD_SIZE[0]}x{HEAD_SIZE[1]}（底部裁 {a.trim_bottom:.0%} 去水印）")
+    if a.cover_only:
+        print("  无片头（--cover-only）：跳过片头底图，只出封面")
+    else:
+        print(f"  片头底图 -> {head_path.name}  {HEAD_SIZE[0]}x{HEAD_SIZE[1]}（底部裁 {a.trim_bottom:.0%} 去水印）")
     print(f"  封面竖图 -> {cover_path.name}  {COVER_SIZE[0]}x{COVER_SIZE[1]}（纵裁锚点 {a.cover_x:.2f}）")
     print("\n下一步：")
-    print('  1) shots.json 的 head_image 写 "片头图/head_16x9.jpg"，再重跑 write_director_doc 刷新导演稿')
-    print("  2) make_cover.py --image 指 cover_2x3.jpg 出抖音/小红书；B 站 16:9 用 head_16x9.jpg")
+    if a.cover_only:
+        print("  1) 片头形态 D 无需 head_image（引擎不挂片头），封面直接进 make_cover.py")
+        print("  2) make_cover.py --image 指 cover_2x3.jpg 出抖音/小红书；B 站 16:9 用这张横图本身")
+    else:
+        print('  1) shots.json 的 head_image 写 "片头图/head_16x9.jpg"，再重跑 write_director_doc 刷新导演稿')
+        print("  2) make_cover.py --image 指 cover_2x3.jpg 出抖音/小红书；B 站 16:9 用 head_16x9.jpg")
 
 
 if __name__ == "__main__":
