@@ -253,8 +253,8 @@ def check(rows, images, groups):
         if is_placeholder(r["note"]):
             hard.append(f"镜 {r['i']}：note 仍是占位文本「{short(r['note'], 16)}」，无法核对画面情节")
             continue
-        if not re.match(r"^【[^】]*】", r["note"]):
-            soft.append(f"镜 {r['i']}：note 没按「【景别·主体】」开头，auto 运镜会判不准")
+        if not re.match(r"^【([^】]+)】", r["note"]):
+            soft.append(f"镜 {r['i']}：note 没按「【景别·主体】」开头——auto 只能退正文兜底，判不出会落 hold 并标「未识别」")
         if not r["line"]:
             soft.append(f"镜 {r['i']}：没有对应旁白句（lines.json 比镜头少）")
     # 宫格覆盖的镜要连续

@@ -302,36 +302,114 @@ IMG_PATHS = [
 ]
 
 
-def _auto_move(note, beat, last):
-    """按 note/beat 的文字标签推断运镜。标签写法建议【景别·主体】，见 workflow.md。"""
-    t = f"{note} {beat}"
+TAG_RE = re.compile(r"^\s*【([^】]+)】")
+NOISE_RE = re.compile(r"（[^）]*）|\([^)]*\)")
+# 景别表（标签第一段）：直接映射运镜。zoom 三档 0.04 / 0.08 / 0.12；pan 用 pct（占画宽百分比，渲染时按实际 z0 反算）
+SHOT_SIZE_MOVE = {
+    "大远景": ("pan_x", 0.048), "远景": ("pan_x", 0.048),
+    "全景": ("pan_x", 0.042), "空镜": ("pan_x", 0.048),
+    "中景": ("zoom", 0.04), "近景": ("zoom", 0.08),
+    "特写": ("zoom", 0.12), "大特写": ("zoom", 0.12),
+}
+# 主体表（标签第二段 / 正文兜底）：全部双字以上，避免「雪/海/刀/信/印」这类单字误命中
+SUBJECT_MOVE = {
+    "战斗": (("战斗", "厮杀", "交战", "冲锋", "混战", "对峙", "攻城", "血战", "追击",
+              "突围", "冲杀", "冲阵", "杀出", "列阵", "军阵", "夜袭"), ("zoom", 0.12)),
+    "人群": (("人群", "群臣", "朝会", "市集", "码头", "营帐", "街道", "人流",
+              "长街", "广场", "船坞", "宴席", "大殿", "列队"), ("pan_x", 0.042)),
+    "器物": (("器物", "手部", "奏报", "奏折", "金锭", "银箱", "账册", "罗盘",
+              "烛火", "烛台", "朱笔", "印玺", "印章", "玉玺", "茶盏", "茶碗",
+              "刀光", "刀锋", "书信", "信笺", "密信", "圣旨", "兵符"), ("zoom", 0.08)),
+    "人物": (("人物", "背影", "侧后", "独处", "对话", "跪拜", "跪地", "站姿",
+              "坐姿", "面孔", "书生", "官员", "主角", "主人翁", "近身"), ("zoom", 0.04)),
+}
+# 正文兜底里的「空镜/远景」组，同样只用双字以上
+BODY_SCENE = ("空镜", "无人", "留白", "远景", "雪原", "雪地", "海面", "海上",
+              "山川", "群山", "城墙", "天空", "荒原", "戈壁", "沙漠", "草原",
+              "江面", "船队", "舰队", "原野", "废墟")
 
-    def kw(*words):
-        return any(w in t for w in words)
 
-    # 结尾空镜优先拉远，收束感最强
-    if last and kw("空镜", "无人", "留白", "雪", "海", "城墙", "原野", "废墟"):
-        return {"type": "zoom", "amount": 0.09, "dir": "out"}
-    if kw("空镜", "无人", "留白", "远景", "海面", "海上", "山川", "群山", "城墙",
-          "雪原", "天空", "荒原", "戈壁", "沙漠", "草原", "江面", "船队", "舰队"):
-        return {"type": "pan_x", "amount": 0.45}
-    if kw("人群", "群臣", "朝会", "市集", "码头", "营帐", "列阵", "军阵", "街道",
-          "人流", "长街", "广场", "船坞", "宴席", "大殿"):
-        return {"type": "pan_x", "amount": 0.39}
-    if kw("战斗", "厮杀", "交战", "冲锋", "混战", "对峙", "攻城", "血战", "追击"):
-        return {"type": "zoom", "amount": 0.12, "dir": "in"}
-    if kw("特写", "手部", "器物", "奏报", "奏折", "金锭", "银箱", "账册", "罗盘",
-          "烛", "朱笔", "玺", "印", "碗", "茶", "刀", "信"):
-        return {"type": "zoom", "amount": 0.105, "dir": "in"}
-    if kw("人物", "背影", "侧后", "中景", "近景", "独处", "对话", "跪", "站",
-          "坐", "面孔", "书生", "官员", "主角", "主人翁"):
-        return {"type": "zoom", "amount": 0.09, "dir": "in"}
-    return {"type": "zoom", "amount": 0.075, "dir": "in"}
+def _strip_noise(text):
+    """剥掉（重音）（旁白注）这类括注，再剥首部标签，返回 (tag_body, body)。"""
+    t = NOISE_RE.sub("", str(text or "")).strip()
+    m = TAG_RE.match(t)
+    if not m:
+        return "", t
+    return m.group(1).strip(), t[m.end():].strip()
+
+
+def _split_tag(tag):
+    """【景别·主体】→ (景别, 主体)；没有 · 时整段按景别猜。"""
+    for sep in ("·", "・", "｜", "|"):
+        if sep in tag:
+            a, b = tag.split(sep, 1)
+            return a.strip(), b.strip()
+    return tag.strip(), ""
+
+
+def _subject_of(text):
+    for name, (words, move) in SUBJECT_MOVE.items():
+        if any(w in text for w in words):
+            return name, move
+    return "", None
+
+
+def _auto_move(note, last):
+    """按 note 的【景别·主体】标签选运镜：标签优先，正文兜底，都判不出就 hold 并标「未识别」。"""
+    tag, body = _strip_noise(note)
+    size, subject = _split_tag(tag) if tag else ("", "")
+    why = ""
+    mv = None
+
+    # ① 标签优先：景别直接映射
+    base = SHOT_SIZE_MOVE.get(size) if size else None
+    if base:
+        kind, val = base
+        mv = {"type": kind, (("pct" if kind == "pan_x" else "amount")): val}
+        why = f"标签·{size}"
+    # ② 景别没命中就看标签里的主体
+    if mv is None and subject:
+        name, smove = _subject_of(subject)
+        if smove:
+            kind, val = smove
+            mv = {"type": kind, (("pct" if kind == "pan_x" else "amount")): val}
+            why = f"标签·主体{name}"
+    # ③ 主体是战斗/人群时对景别做一格升级（中景战斗别写成弱推）
+    if mv is not None and mv["type"] == "zoom":
+        _, smove = _subject_of(subject)
+        if smove and smove[0] == "zoom" and smove[1] > mv["amount"]:
+            mv["amount"], why = smove[1], f"{why}+主体战斗升级"
+    # ④ 正文二级兜底（仅无标签或标签判不出时）：动作优先，其次空镜/远景，最后其它主体
+    if mv is None:
+        name, smove = _subject_of(body)
+        if name == "战斗" and smove:
+            kind, val = smove
+            mv = {"type": kind, "amount": val}
+            why = "正文兜底·主体战斗"
+        elif any(w in body for w in BODY_SCENE):
+            mv, why = {"type": "pan_x", "pct": 0.048}, "正文兜底·空镜/远景"
+        elif smove:
+            kind, val = smove
+            mv = {"type": kind, (("pct" if kind == "pan_x" else "amount")): val}
+            why = f"正文兜底·主体{name}"
+    # ⑤ 末镜收尾：空镜类改成拉远，给结尾针留静场
+    if last and mv is not None and (
+            size in ("空镜", "远景", "大远景") or any(w in body for w in ("空镜", "无人", "留白", "雪原", "海面", "城墙", "原野", "废墟"))):
+        mv, why = {"type": "zoom", "amount": 0.12, "dir": "out"}, "末镜收尾拉远"
+    # ⑥ 都判不出 → hold，并在日志暴露 note 的问题（不再伪装成一次缓推）
+    if mv is None:
+        return {"type": "hold", "why": "未识别 note（补【景别·主体】）"}
+    if mv["type"] == "zoom":
+        mv.setdefault("dir", "in")
+    mv["why"] = why
+    return mv
 
 
 def resolve_moves(shots):
-    """静态镜默认按 note/beat 标签自动推断运镜（v2.7.0）；`{"auto": false}` 回落旧版纵向浮动。"""
+    """静态镜默认按 note 标签自动推断运镜（v2.7.0）；`{"auto": false}` 回落旧版纵向浮动。
+    v2.11.3：beat 不再参与画面判定（只在 hold 节奏层做段边界）；判不出落 hold 并标「未识别」。"""
     last = len(shots) - 1
+    beats = [str(s.get("beat", "")) for s in shots]
     out, autos = {}, set()
     for i, s in enumerate(shots):
         if s.get("motion"):
@@ -342,7 +420,7 @@ def resolve_moves(shots):
         if kind in ("legacy", "float", "pan_y_legacy") or mv.get("auto") is False:
             out[i] = {}                      # 显式退回旧版纵向浮动
         elif kind in ("auto", "auto_move") or mv.get("auto") is True or not kind:
-            out[i] = _auto_move(str(s.get("note", "")), str(s.get("beat", "")), i == last)
+            out[i] = _auto_move(str(s.get("note", "")), i == last)
             autos.add(i)
         else:
             out[i] = mv                      # 人工指定，不参与节奏改写
@@ -369,13 +447,22 @@ def resolve_moves(shots):
             run_len = 1
         run_dir = d
         mv["dir"] = d
-    # ② 每 5 镜至少留一镜不动（hold），给眼睛休息点；末镜豁免（收尾拉远更有价值）
+    # ② 每 5 镜至少留一镜不动（hold），给眼睛休息点；末镜豁免（收尾拉远更有价值）。
+    #    有候选时优先落「段落边界」（beat 变化处的第一镜），没有才回退到窗口中点。
     for w0 in range(0, len(shots), 5):
         win = [i for i in range(w0, min(w0 + 5, len(shots)))
-               if i in autos and i != last and out[i].get("type") != "none"]
-        if not win or any(out[i].get("type") == "hold" for i in win):
+               if i in autos and i != last and out[i].get("type") not in ("none", "hold")]
+        if not win:
             continue
-        out[win[len(win) // 2]] = {"type": "hold"}
+        if any(out[i].get("type") == "hold" for i in
+               range(w0, min(w0 + 5, len(shots))) if i in autos):
+            continue
+        cand = [i for i in win if i > 0 and beats[i] != beats[i - 1]]
+        pick = min(cand, key=lambda x: abs(x - (w0 + len(win) // 2))) if cand else win[len(win) // 2]
+        prev = out[pick].get("type", "") + (
+            f" {out[pick].get('amount')}" if out[pick].get("amount") else "")
+        out[pick] = {"type": "hold",
+                     "why": ("节奏:段落收束" if cand else "节奏:每5镜一静") + f"（原判 {prev.strip()}）"}
     return out
 
 
@@ -403,8 +490,10 @@ if EPISODE_ARG:
     if _moves:
         txt = " | ".join(
             f"镜{i} {MOVE_BY_N[i].get('type')}"
+            + (f" {MOVE_BY_N[i].get('pct')}pct" if MOVE_BY_N[i].get("pct") else "")
             + (f" {MOVE_BY_N[i].get('amount')}" if MOVE_BY_N[i].get("amount") else "")
             + (f" {MOVE_BY_N[i].get('dir')}" if MOVE_BY_N[i].get("dir") else "")
+            + (f"（{MOVE_BY_N[i]['why']}）" if MOVE_BY_N[i].get("why") else "")
             for i in _moves)
         print(f"[运镜] {txt}")
     ACCENTS = set(cfg.get("accents", []))
@@ -981,9 +1070,17 @@ def shot_chain(label, i, dur, phase, is_motion, crop16x9, half=0, tag=None):
         x = "iw/2-(iw/zoom/2)"
         y = "ih/2-(ih/zoom/2)"
     elif kind == "pan_x":
-        amt = max(0.05, min(0.5, float(mv.get("amount", 0.2) or 0.2)))
-        z = f"{z0}"
-        span_x = f"(iw-iw/zoom)*{amt:.3f}"
+        # v2.11.3：优先按「目标位移百分比」反算——pan 镜固定 z0=1.12（横向余量 10.71%），
+        # 于是 pct=0.048 在任何 lens 上都是画宽的 4.8%。显式写 amount 的老篇照旧走下方比例口径。
+        if mv.get("pct"):
+            pct = max(0.005, min(0.08, float(mv.get("pct") or 0) or 0.048))
+            z_pan = 1.12
+            amt = pct / (1 - 1 / z_pan)
+            z = f"{z_pan}"
+        else:
+            amt = max(0.05, min(0.5, float(mv.get("amount", 0.2) or 0.2)))
+            z = f"{z0}"
+        span_x = f"(iw-iw/zoom)*{amt:.4f}"
         left = direction == "left" or (not direction and i % 2 == 0)
         x = (f"iw/2-(iw/zoom/2)-{span_x}*(1-{prog})" if left
              else f"iw/2-(iw/zoom/2)+{span_x}*{prog}")
@@ -1437,5 +1534,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
