@@ -279,8 +279,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--id", required=True)
     ap.add_argument("--root", help="工作目录；也可用 STORY_ROOT；默认当前目录")
-    ap.add_argument("--panels", type=int, default=0,
-                    help="出图方式：0=自动（按图名 _pNN 推断）/ 2=两宫格 / 4=四格；还没出图时用它排表")
+    ap.add_argument("--panels", type=int, default=2,
+                    help="出图方式：2=两宫格（默认）/ 4=四格 / 1=单图 / 0=自动（按已有图名 _pNN 推断）；"
+                         "还没出图时就用它排表")
     ap.add_argument("--out", help="清单输出路径；默认 episodes/<id>/宫格对照清单.md")
     ap.add_argument("--check", action="store_true", help="填图后体检：缺图 / 占位 note / 错位风险")
     ap.add_argument("--quiet", action="store_true", help="只写文件，屏幕只打一行结果")

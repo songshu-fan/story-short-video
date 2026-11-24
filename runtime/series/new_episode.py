@@ -469,24 +469,25 @@ def write_director_doc(ep):
     else:
         head_desc = f"5s 说书人：「{head_cfg.get('text') or cfg.get('head_text', '')}」"
 
-    # 发布候选（v2.10.0）：三组「标题 + 一句描述」，由 set_titles.py 写进 script.json
+    # 发布候选（v2.11.0）：三组「标题 + 核心思想 + 描述」，由 set_titles.py 写进 script.json
     titles = script.get("titles") or []
     if titles:
         trows = "\n".join(
-            f"| {i} | {t.get('title', '')} | {t.get('desc', '')} |"
+            f"| {i} | {t.get('title', '')} | {t.get('idea', '') or '—'} | {t.get('desc', '')} |"
             for i, t in enumerate(titles, 1))
         titles_block = (
-            "## 发布候选（三组标题与描述）\n\n"
-            "| # | 标题 | 描述 |\n|---:|---|---|\n"
+            "## 发布候选（三组：标题 / 核心思想 / 描述）\n\n"
+            "| # | 标题 | 核心思想 | 描述 |\n|---:|---|---|---|\n"
             + trows + "\n\n"
-            f"- 成片名仍用纯主题名「{cfg.get('title', '')}」，发布标题与描述只用在平台侧，不进画面与字幕。\n"
+            f"- 标题默认就用篇名「{cfg.get('title', '')}」，要张力才加破折号副题；核心思想 15~25 字；描述 60~120 字（前 30 字是钩子）。\n"
+            "- 成片名仍用纯主题名，发布字段只用在平台侧，不进画面与字幕。\n"
             "- 换一批：重跑 `scripts/set_titles.py` 覆盖即可。\n\n"
         )
     else:
         titles_block = (
-            "## 发布候选（三组标题与描述）\n\n"
+            "## 发布候选（三组：标题 / 核心思想 / 描述）\n\n"
             "（还没写入：`python scripts/set_titles.py --id <id> --root <root> "
-            "--cand \"标题一|描述一\" --cand \"标题二|描述二\" --cand \"标题三|描述三\"`，"
+            "--cand \"标题一|核心一|描述一\" --cand \"标题二|核心二|描述二\" --cand \"标题三|核心三|描述三\"`，"
             "写好后本表自动出现）\n\n"
         )
 
